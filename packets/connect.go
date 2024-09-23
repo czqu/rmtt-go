@@ -7,11 +7,11 @@ import (
 
 type ConnectPacket struct {
 	FixedHeader
-	MagicNumber      uint32
-	ProtocolVersion  byte
-	Reserved         byte
-	Keepalive        uint16
-	ClientIdentifier string
+	MagicNumber     uint32
+	ProtocolVersion byte
+	Reserved        byte
+	Keepalive       uint16
+	Token           string
 }
 
 func (c *ConnectPacket) Write(w io.Writer) error {
@@ -21,7 +21,7 @@ func (c *ConnectPacket) Write(w io.Writer) error {
 	body.WriteByte(c.ProtocolVersion)
 	body.WriteByte(c.Reserved)
 	body.Write(encodeUint16(c.Keepalive))
-	body.Write(encodeString(c.ClientIdentifier))
+	body.Write(encodeString(c.Token))
 
 	c.FixedHeader.RemainingLength = body.Len()
 	packet := c.FixedHeader.pack()
@@ -51,7 +51,7 @@ func (c *ConnectPacket) Unpack(b io.Reader) error {
 	if err != nil {
 		return err
 	}
-	c.ClientIdentifier, err = decodeString(b)
+	c.Token, err = decodeString(b)
 	if err != nil {
 		return err
 	}
