@@ -18,16 +18,18 @@
 package RMTT
 
 import (
+	"crypto/tls"
 	"net/url"
 	"strings"
 	"time"
 )
 
+type ConnectionAttemptHandler func(server *url.URL, tlsCfg *tls.Config) *tls.Config
 type ConnectionLostHandler func(Client, error)
 type ReconnectHandler func(Client, *ClientOptions)
 type ClientOptions struct {
 	Servers              []*url.URL
-	ClientID             string
+	Token                string
 	Heartbeat            int64
 	ProtocolVersion      uint
 	ConnectRetry         bool
@@ -38,6 +40,8 @@ type ClientOptions struct {
 	OnConnectionLost     ConnectionLostHandler
 	MaxReconnectInterval time.Duration
 	OnReconnecting       ReconnectHandler
+	TLSConfig            *tls.Config
+	OnConnectAttempt     ConnectionAttemptHandler
 }
 
 func (o *ClientOptions) AddServer(server string) *ClientOptions {
@@ -55,8 +59,8 @@ func (o *ClientOptions) AddServer(server string) *ClientOptions {
 	o.Servers = append(o.Servers, serverURI)
 	return o
 }
-func (o *ClientOptions) SetClientID(id string) *ClientOptions {
-	o.ClientID = id
+func (o *ClientOptions) SetToken(id string) *ClientOptions {
+	o.Token = id
 	return o
 }
 func (o *ClientOptions) SetHeartbeat(k time.Duration) *ClientOptions {
@@ -71,10 +75,18 @@ func (o *ClientOptions) SetWriteTimeout(k time.Duration) *ClientOptions {
 	o.WriteTimeout = k
 	return o
 }
+func (o *ClientOptions) SetTlsConfig(config *tls.Config) *ClientOptions {
+	o.TLSConfig = config
+	return o
+}
+func (o *ClientOptions) SetConnectionAttemptHandler(onConnectAttempt ConnectionAttemptHandler) *ClientOptions {
+	o.OnConnectAttempt = onConnectAttempt
+	return o
+}
 func NewClientOptions() *ClientOptions {
 	o := &ClientOptions{
 		Servers:              nil,
-		ClientID:             "",
+		Token:                "",
 		Heartbeat:            10,
 		ProtocolVersion:      0,
 		ConnectRetry:         true,
@@ -84,6 +96,7 @@ func NewClientOptions() *ClientOptions {
 		OnConnectionLost:     nil,
 		MaxReconnectInterval: 10 * time.Minute,
 		OnReconnecting:       nil,
+		OnConnectAttempt:     nil,
 	}
 	return o
 }

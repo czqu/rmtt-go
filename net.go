@@ -18,53 +18,51 @@
 package RMTT
 
 import (
+	"crypto/tls"
 	"errors"
 	"github.com/czqu/rmtt-go/packets"
 	"github.com/xtaci/kcp-go"
 	"io"
 	"net"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/net/proxy"
 	"net/url"
 )
 
 const closedNetConnErrorText = "use of closed network connection"
 
-func openConnection(uri *url.URL, dialer *net.Dialer) (net.Conn, error) {
+func openConnection(uri *url.URL, tlsc *tls.Config, dialer *net.Dialer) (net.Conn, error) {
 	switch uri.Scheme {
 	case "tcp":
-		allProxy := os.Getenv("all_proxy")
-		if len(allProxy) == 0 {
-			conn, err := dialer.Dial("tcp", uri.Host)
-			if err != nil {
-				return nil, err
-			}
-			return conn, nil
-		}
-		proxyDialer := proxy.FromEnvironment()
-
-		conn, err := proxyDialer.Dial("tcp", uri.Host)
+		conn, err := dialer.Dial("tcp", uri.Host)
 		if err != nil {
 			return nil, err
 		}
 		return conn, nil
 	case "kcp":
-		// Handle KCP connections
-
-		// Create a KCP connection on top of the UDP connection
-		//	key := pbkdf2.Key([]byte("demo pass"), []byte("demo salt"), 1024, 32, sha1.New)
-		//	block, _ := kcp.NewAESBlockCrypt(key)
 		kcpConn, err := kcp.Dial(uri.Host)
 		if err != nil {
 			return nil, err
 		}
-
 		return kcpConn, nil
+	case "tls":
+		conn, err := dialer.Dial("tcp", uri.Host)
+		if err != nil {
+			return nil, err
+		}
+
+		tlsConn := tls.Client(conn, tlsc)
+
+		err = tlsConn.Handshake()
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+
+		return tlsConn, nil
 
 	}
 	return nil, errors.New("unknown protocol")

@@ -243,7 +243,7 @@ func newConnectMsgFromOptions(options *ClientOptions, broker *url.URL) *packets.
 	m := packets.NewControlPacket(packets.Connect).(*packets.ConnectPacket)
 
 	m.MagicNumber = 0x637a7175
-	m.ClientIdentifier = options.ClientID
+	m.Token = options.Token
 	m.Keepalive = uint16(options.Heartbeat)
 	return m
 }
@@ -267,10 +267,14 @@ func (c *client) attemptConnection() (net.Conn, byte, error) {
 		connDeadline := time.Now().Add(c.options.ConnectTimeout)
 		dialer := &net.Dialer{Timeout: c.options.ConnectTimeout}
 		DEBUG.Println(CLI, "Attempting connection to server", server)
-		conn, err = openConnection(server, dialer)
+		tlsCfg := c.options.TLSConfig
+		conn, err = openConnection(server, tlsCfg, dialer)
+		if c.options.OnConnectAttempt != nil {
+			tlsCfg = c.options.OnConnectAttempt(server, c.options.TLSConfig)
+		}
 		if err != nil {
 			ERROR.Println(err.Error())
-			WARN.Println(CLI, "failed to connect to server, trying next")
+			WARN.Println(CLI, "failed to connect to server, trying next, error:", err)
 			rc = packets.ErrNetworkError
 			continue
 		}

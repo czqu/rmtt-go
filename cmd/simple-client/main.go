@@ -1,9 +1,11 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	RMTT "github.com/czqu/rmtt-go"
 	"log"
+	"net/url"
 	"os"
 	"time"
 )
@@ -16,11 +18,25 @@ func main() {
 
 	opts := RMTT.NewClientOptions()
 
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: false,
+		MinVersion:         tls.VersionTLS13,
+	}
+	opts.SetTlsConfig(tlsConfig)
+	opts.AddServer("tls://127.0.0.1:3018")
 	opts.AddServer("tcp://127.0.0.1:3016")
 	opts.AddServer("kcp://127.0.0.1:3017")
-	opts.SetClientID("test-client")
+
+	opts.SetToken("test")
 	opts.SetConnectTimeout(5 * time.Second)
 	opts.SetWriteTimeout(5 * time.Second)
+	opts.AutoReconnect = false
+	opts.ConnectRetryInterval = 1 * time.Second
+	opts.SetConnectionAttemptHandler(
+		func(server *url.URL, tlsCfg *tls.Config) *tls.Config {
+			fmt.Printf("Connecting to %s\n", server.String())
+			return tlsConfig
+		})
 	var callback RMTT.MessageHandler = func(client RMTT.Client, msg RMTT.Message) {
 		fmt.Printf("recv msg size: %d\n", len(msg.Payload()))
 	}
