@@ -19,10 +19,12 @@ func main() {
 	opts := RMTT.NewClientOptions()
 
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: false,
+		InsecureSkipVerify: true,
 		MinVersion:         tls.VersionTLS13,
+		NextProtos:         []string{"h3"},
 	}
 	opts.SetTlsConfig(tlsConfig)
+	opts.AddServer("quic://127.0.0.1:3019")
 	opts.AddServer("tls://127.0.0.1:3018")
 	opts.AddServer("tcp://127.0.0.1:3016")
 	opts.AddServer("kcp://127.0.0.1:3017")
@@ -30,7 +32,8 @@ func main() {
 	opts.SetToken("test")
 	opts.SetConnectTimeout(5 * time.Second)
 	opts.SetWriteTimeout(5 * time.Second)
-	opts.AutoReconnect = false
+	opts.SetConnectTimeout(5 * time.Second)
+	opts.AutoReconnect = true
 	opts.ConnectRetryInterval = 1 * time.Second
 	opts.SetConnectionAttemptHandler(
 		func(server *url.URL, tlsCfg *tls.Config) *tls.Config {
