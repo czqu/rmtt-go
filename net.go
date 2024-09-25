@@ -18,9 +18,11 @@
 package RMTT
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"github.com/czqu/rmtt-go/packets"
+	"github.com/quic-go/quic-go"
 	"github.com/xtaci/kcp-go"
 	"io"
 	"net"
@@ -34,6 +36,45 @@ import (
 
 const closedNetConnErrorText = "use of closed network connection"
 
+type quicConn struct {
+	quic.Stream
+	session quic.Connection
+}
+
+func (qc *quicConn) LocalAddr() net.Addr {
+	return qc.session.LocalAddr()
+}
+
+func (qc *quicConn) RemoteAddr() net.Addr {
+	return qc.session.RemoteAddr()
+}
+
+func (qc *quicConn) SetDeadline(t time.Time) error {
+	return qc.Stream.SetDeadline(t)
+}
+
+func (qc *quicConn) SetReadDeadline(t time.Time) error {
+	return qc.Stream.SetReadDeadline(t)
+}
+
+func (qc *quicConn) SetWriteDeadline(t time.Time) error {
+	return qc.Stream.SetWriteDeadline(t)
+}
+func (qc *quicConn) Read(b []byte) (int, error) {
+	return qc.Stream.Read(b)
+}
+
+func (qc *quicConn) Write(b []byte) (int, error) {
+	return qc.Stream.Write(b)
+}
+
+func (qc *quicConn) Close() error {
+	err := qc.Stream.Close()
+	if err != nil {
+		return err
+	}
+	return qc.session.CloseWithError(0, "")
+}
 func openConnection(uri *url.URL, tlsc *tls.Config, dialer *net.Dialer) (net.Conn, error) {
 	switch uri.Scheme {
 	case "tcp":
@@ -63,8 +104,19 @@ func openConnection(uri *url.URL, tlsc *tls.Config, dialer *net.Dialer) (net.Con
 		}
 
 		return tlsConn, nil
+	case "quic":
+		session, err := quic.DialAddr(context.Background(), uri.Host, tlsc, nil)
+		if err != nil {
+			return nil, err
+		}
+		stream, err := session.OpenStreamSync(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return &quicConn{Stream: stream, session: session}, nil
 
 	}
+
 	return nil, errors.New("unknown protocol")
 }
 func connectServer(conn io.ReadWriter, cm *packets.ConnectPacket, protocolVersion uint) (byte, error) {
