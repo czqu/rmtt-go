@@ -2,7 +2,11 @@ module github.com/czqu/rmtt-go
 
 go 1.23
 
-require golang.org/x/net v0.28.0
+require (
+	github.com/quic-go/quic-go v0.47.0
+	github.com/xtaci/kcp-go v5.4.20+incompatible
+	golang.org/x/net v0.28.0
+)
 
 require (
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
@@ -11,11 +15,10 @@ require (
 	github.com/klauspost/reedsolomon v1.12.3 // indirect
 	github.com/onsi/ginkgo/v2 v2.9.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/quic-go/quic-go v0.47.0 // indirect
 	github.com/templexxx/cpufeat v0.0.0-20180724012125-cef66df7f161 // indirect
 	github.com/templexxx/xor v0.0.0-20191217153810-f85b25db303b // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
-	github.com/xtaci/kcp-go v5.4.20+incompatible // indirect
+	github.com/xtaci/lossyconn v1.0.0 // indirect
 	go.uber.org/mock v0.4.0 // indirect
 	golang.org/x/crypto v0.26.0 // indirect
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
