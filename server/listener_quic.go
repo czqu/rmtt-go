@@ -10,16 +10,15 @@ import (
 )
 
 type quicListener struct {
-	addr      string
-	config    *tls.Config
-	quicConf  *quic.Config
-	ln        *quic.Listener
-	userWarned bool
+	addr     string
+	config   *tls.Config
+	quicConf *quic.Config
+	ln       *quic.Listener
 }
 
 // quicConf returns the shared quic-go transport configuration. The library's
 // adaptive heartbeat can stretch far beyond quic-go's 30s default idle timeout
-// (spec §9.2 allows up to 600s), so that default would drop otherwise idle but
+// (heartbeats up to 600s are allowed), so that default would drop otherwise idle but
 // still-live connections. KeepAlivePeriod forces a lightweight interval packet
 // so the QUIC idle timer never fires while an application heartbeat is in
 // between longer gaps; MaxIdleTimeout is a generous hard cap.
@@ -92,7 +91,7 @@ func (l *quicListener) Serve(ctx context.Context, handler func(net.Conn)) error 
 }
 
 // serveSession accepts bidirectional streams from a QUIC connection; each stream
-// is treated as one RMTT device connection.
+// is treated as one rmtt device connection.
 func (l *quicListener) serveSession(ctx context.Context, session quic.Connection, handler func(net.Conn)) {
 	for {
 		stream, err := session.AcceptStream(ctx)

@@ -8,7 +8,7 @@ import (
 )
 
 // wsConn adapts a message-based WebSocket connection to a byte-stream net.Conn.
-// It buffers one incoming WebSocket message at a time so the RMTT codec can read
+// It buffers one incoming WebSocket message at a time so the rmtt codec can read
 // arbitrary-length frames across message boundaries.
 type wsConn struct {
 	ws  *websocket.Conn

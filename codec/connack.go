@@ -5,6 +5,8 @@ import (
 	"io"
 )
 
+// ConnackPacket is the server's reply to CONNECT; it carries the return code
+// and the negotiated server keepalive in seconds.
 type ConnackPacket struct {
 	FixedHeader
 	ReturnCode      byte

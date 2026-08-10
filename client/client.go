@@ -14,6 +14,8 @@ import (
 	"github.com/czqu/rmtt-go/codec"
 )
 
+// Client is a single connection to an rmtt server. Create one with NewClient;
+// asynchronous operations are completed via Token.
 type Client interface {
 	IsConnected() bool
 	Connect() Token
@@ -39,6 +41,8 @@ type client struct {
 	backoff        *backoffController
 }
 
+// NewClient creates a Client from the given options. The options value is
+// copied, so later mutations have no effect on the client.
 func NewClient(o *ClientOptions) Client {
 	c := &client{}
 	c.options = *o
@@ -231,6 +235,9 @@ func newConnectMsgFromOptions(options *ClientOptions, broker *url.URL) *codec.Co
 	return m
 }
 
+// Errors surfaced by Connect when the server rejects the CONNECT request
+// (bad protocol version / not authorised) or a protocol violation is
+// detected during the handshake.
 var (
 	RefusedNotAuthorisedErr      = errors.New("The server has rejected our request. Please check your permissions")
 	RefusedBadProtocolVersionErr = errors.New("Server does not support protocol version")
@@ -395,6 +402,7 @@ func (c *client) IsConnected() bool {
 	}
 }
 
+// ErrNotConnected is returned by Push when the client is not connected.
 var ErrNotConnected = errors.New("not Connected")
 
 func (c *client) Push(payload interface{}) Token {
@@ -440,6 +448,7 @@ func (c *client) Push(payload interface{}) Token {
 	return token
 }
 
+// MessageHandler receives a PUSH message from the server.
 type MessageHandler func(Client, Message)
 
 type handler struct {

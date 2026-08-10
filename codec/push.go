@@ -6,6 +6,7 @@ import (
 	"io"
 )
 
+// PushPacket carries an application payload in either direction.
 type PushPacket struct {
 	FixedHeader
 	Reserved byte

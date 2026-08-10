@@ -5,6 +5,8 @@ import (
 	"io"
 )
 
+// DisconnectPacket closes the connection gracefully; the return code gives
+// the reason.
 type DisconnectPacket struct {
 	FixedHeader
 	returnCode byte
@@ -31,10 +33,12 @@ func (d *DisconnectPacket) Unpack(r io.Reader) error {
 	return nil
 }
 
+// GetReturnCode returns the DISCONNECT reason code.
 func (d *DisconnectPacket) GetReturnCode() byte {
 	return d.returnCode
 }
 
+// SetReturnCode sets the DISCONNECT reason code.
 func (d *DisconnectPacket) SetReturnCode(code byte) {
 	d.returnCode = code
 }

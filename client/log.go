@@ -1,22 +1,28 @@
 package client
 
+// NET and CLI are the log prefixes used by the net and client subsystems.
 const (
 	NET string = "[net]     "
 	CLI string = "[client]     "
 )
 
 type (
+	// Logger is the pluggable logging interface; it mirrors log.Logger's
+	// Println/Printf, so *log.Logger satisfies it directly.
 	Logger interface {
 		Println(v ...interface{})
 		Printf(format string, v ...interface{})
 	}
 
+	// NOOPLogger discards all log output; it is the default logger.
 	NOOPLogger struct{}
 )
 
 func (NOOPLogger) Println(v ...interface{})               {}
 func (NOOPLogger) Printf(format string, v ...interface{}) {}
 
+// Package-level loggers, one per severity. All default to NOOPLogger; replace
+// them with SetLogger or the per-level setters.
 var (
 	ERROR Logger = NOOPLogger{}
 	INFO  Logger = NOOPLogger{}

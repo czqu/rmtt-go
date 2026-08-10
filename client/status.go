@@ -8,7 +8,7 @@ import (
 type status uint32
 
 const (
-	disconnected  status = iota
+	disconnected status = iota
 	disconnecting
 	connecting
 	reconnecting

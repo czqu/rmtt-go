@@ -2,6 +2,7 @@ package codec
 
 import "io"
 
+// PingreqPacket is a keepalive probe sent by the client.
 type PingreqPacket struct {
 	FixedHeader
 }
