@@ -9,10 +9,19 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// ConnectionAttemptHandler is invoked before each connection attempt; it may
+// return a modified *tls.Config for that attempt.
 type ConnectionAttemptHandler func(server *url.URL, tlsCfg *tls.Config) *tls.Config
+
+// ConnectionLostHandler is invoked when the connection is lost.
 type ConnectionLostHandler func(Client, error)
+
+// ReconnectHandler is invoked before each reconnection attempt.
 type ReconnectHandler func(Client, *ClientOptions)
 
+// ClientOptions holds all configuration for a Client. Create with
+// NewClientOptions and adjust with the Set* helpers or direct field
+// assignment.
 type ClientOptions struct {
 	Servers              []*url.URL
 	Credential           string
@@ -31,16 +40,16 @@ type ClientOptions struct {
 	ReconnectBase        time.Duration
 	ReconnectJitter      float64
 
-	// Adaptive heartbeat (spec §6.5, client-side policy). When enabled, the client probes the
+	// Adaptive heartbeat (client-side policy). When enabled, the client probes the
 	// maximum sustainable heartbeat interval within [AdaptiveShort, AdaptiveMax] (capped by the
 	// negotiated server_kp from CONNACK) and settles at ~90% of the found maximum. The CONNECT
 	// Keepalive proposal becomes AdaptiveMax. Mutually exclusive with a fixed Heartbeat.
 	AdaptiveHeartbeat bool
-	AdaptiveShort     int64 // seconds
-	AdaptiveMax       int64 // seconds
-	ProbeCount        int
-	ResponseWindow    time.Duration
-	FineStep          int64 // seconds
+	AdaptiveShort     int64         // seconds
+	AdaptiveMax       int64         // seconds
+	ProbeCount        int           // consecutive successful short heartbeats before probing starts
+	ResponseWindow    time.Duration // max wait for PINGRESP before a probe counts as failed
+	FineStep          int64         // seconds; nudge step of the fine-tuning probing phase
 
 	// quicConfig overrides the QUIC transport settings for "quic://" servers.
 	// nil (the default) uses the library's hardened defaults
@@ -50,6 +59,8 @@ type ClientOptions struct {
 	quicConfig *quic.Config
 }
 
+// AddServer appends a server URL to the server list. A bare address is
+// treated as tcp://; an address starting with ':' gets 127.0.0.1 prepended.
 func (o *ClientOptions) AddServer(server string) *ClientOptions {
 	if len(server) > 0 && server[0] == ':' {
 		server = "127.0.0.1" + server
@@ -66,17 +77,21 @@ func (o *ClientOptions) AddServer(server string) *ClientOptions {
 	return o
 }
 
+// SetCredential sets the credential sent in CONNECT, used by the server for
+// authentication and device identity.
 func (o *ClientOptions) SetCredential(id string) *ClientOptions {
 	o.Credential = id
 	return o
 }
 
+// SetHeartbeat sets the fixed heartbeat interval (in seconds) sent in
+// CONNECT as the Keepalive proposal. Incompatible with SetAdaptiveHeartbeat.
 func (o *ClientOptions) SetHeartbeat(k time.Duration) *ClientOptions {
 	o.Heartbeat = int64(k / time.Second)
 	return o
 }
 
-// SetAdaptiveHeartbeat enables adaptive heartbeat (spec §6.5). The client probes the maximum
+// SetAdaptiveHeartbeat enables adaptive heartbeat. The client probes the maximum
 // sustainable heartbeat interval within [shortSeconds, maxSeconds] (capped by the negotiated
 // server_kp from CONNACK) and settles at ~90% of the found maximum. Replaces a fixed Heartbeat:
 // the CONNECT Keepalive proposal becomes maxSeconds. Incompatible with SetHeartbeat.
@@ -125,26 +140,32 @@ func (o *ClientOptions) SetFineStep(seconds int64) *ClientOptions {
 	return o
 }
 
+// SetReconnectBase sets the base sleep between reconnection attempts.
 func (o *ClientOptions) SetReconnectBase(k time.Duration) *ClientOptions {
 	o.ReconnectBase = k
 	return o
 }
 
+// SetReconnectJitter sets the jitter factor applied to the backoff sleep.
 func (o *ClientOptions) SetReconnectJitter(j float64) *ClientOptions {
 	o.ReconnectJitter = j
 	return o
 }
 
+// SetConnectTimeout sets the timeout for the connection handshake.
 func (o *ClientOptions) SetConnectTimeout(k time.Duration) *ClientOptions {
 	o.ConnectTimeout = k
 	return o
 }
 
+// SetWriteTimeout sets the timeout for writing an outbound packet.
 func (o *ClientOptions) SetWriteTimeout(k time.Duration) *ClientOptions {
 	o.WriteTimeout = k
 	return o
 }
 
+// SetTlsConfig sets the TLS configuration used for tls://, wss:// and
+// quic:// connections.
 func (o *ClientOptions) SetTlsConfig(config *tls.Config) *ClientOptions {
 	o.TLSConfig = config
 	return o
@@ -177,11 +198,16 @@ func (o *ClientOptions) SetQuicConfig(config *quic.Config) *ClientOptions {
 	return o
 }
 
+// SetConnectionAttemptHandler registers a handler invoked before each
+// connection attempt.
 func (o *ClientOptions) SetConnectionAttemptHandler(onConnectAttempt ConnectionAttemptHandler) *ClientOptions {
 	o.OnConnectAttempt = onConnectAttempt
 	return o
 }
 
+// NewClientOptions returns a ClientOptions with the library defaults:
+// heartbeat 10s, connect timeout 30s, auto-reconnect and connect retry
+// enabled, backoff base 1s with 25% jitter.
 func NewClientOptions() *ClientOptions {
 	o := &ClientOptions{
 		Servers:              nil,

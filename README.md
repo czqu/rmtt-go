@@ -1,18 +1,18 @@
-# RMTT-go — RMTT 协议 Go 实现
+# rmtt-go — rmtt protocol Go implementation
 
-Remote Message Telemetry Transport (RMTT) 协议的 Go 客户端与服务端库。API 设计借鉴 [paho.mqtt.golang](https://github.com/eclipse/paho.mqtt.golang)，熟悉 MQTT 的开发者可快速上手。
+A Go client and server library for the Remote Message Telemetry Transport (rmtt) protocol. The API design borrows from [paho.mqtt.golang](https://github.com/eclipse/paho.mqtt.golang), so developers familiar with MQTT can get started quickly.
 
-支持 **六种传输**：`tcp://` `kcp://` `tls://` `quic://` `ws://` `wss://`，客户端与服务端双向互通。
+Supports **six transports**: `tcp://` `kcp://` `tls://` `quic://` `ws://` `wss://`, interoperable between client and server.
 
-## 安装
+## Installation
 
 ```bash
 go get -u github.com/czqu/rmtt-go
 ```
 
-## 客户端
+## Client
 
-### 最小示例
+### Minimal example
 
 ```go
 package main
@@ -47,62 +47,93 @@ func main() {
 }
 ```
 
-### 传输选择
+### Choosing a transport
 
-`AddServer` 通过 URL scheme 选择传输，等价于 `tcp://` 的裸地址会自动补全：
+`AddServer` selects the transport from the URL scheme; bare addresses without a scheme are treated as `tcp://`:
 
 ```go
 opts.AddServer("tcp://127.0.0.1:18883")    // TCP
 opts.AddServer("kcp://127.0.0.1:18883")    // KCP over UDP
-opts.AddServer("tls://127.0.0.1:18884")    // TLS over TCP，需 SetTlsConfig
-opts.AddServer("quic://127.0.0.1:18885")   // QUIC (TLS 1.3 内置)
+opts.AddServer("tls://127.0.0.1:18884")    // TLS over TCP, needs SetTlsConfig
+opts.AddServer("quic://127.0.0.1:18885")   // QUIC (TLS 1.3 built in)
 opts.AddServer("ws://127.0.0.1:18886")     // WebSocket
-opts.AddServer("wss://127.0.0.1:18887")    // WSS，需 SetTlsConfig
+opts.AddServer("wss://127.0.0.1:18887")    // WSS, needs SetTlsConfig
 ```
 
-TLS 相关传输需要提供证书配置：
+TLS-based transports require a certificate configuration:
 
 ```go
-opts.SetTlsConfig(&tls.Config{InsecureSkipVerify: true}) // 仅测试环境
+opts.SetTlsConfig(&tls.Config{InsecureSkipVerify: true}) // test environments only
 ```
 
-### 主要选项
-
-| 选项 | 默认值 | 说明 |
-|------|--------|------|
-| `SetCredential(id)` | — | CONNECT 携带的凭证，服务端据此认证并提取设备身份 |
-| `SetHeartbeat(d)` | 10s | 心跳间隔（服务端可在 CONNACK 中回推建议值） |
-| `SetConnectTimeout(d)` | 30s | 连接握手超时 |
-| `SetWriteTimeout(d)` | 30s | 写超时 |
-| `AutoReconnect` | true | 断线自动重连（指数退避 + 抖动） |
-| `ConnectRetry` | true | 首次连接失败重试 |
-| `SetReconnectBase(d)` | 1s | 重连退避基数 |
-| `SetReconnectJitter(j)` | 0.25 | 重连退避抖动 |
-
-### 回调
+QUIC ships with hardened transport defaults (`MaxIdleTimeout` 15min, `KeepAlivePeriod` 30s) so an otherwise idle connection is never torn down while application heartbeats grow longer. Override them with `SetQuicConfig` (a config with `KeepAlivePeriod <= 0` is rejected and falls back to the default; `nil` restores the default):
 
 ```go
-c.AddPayloadHandlerLast(func(cl client.Client, msg client.Message) { /* 收到 PUSH */ })
-opts.OnConnectionLost = func(c client.Client, err error) { /* 连接丢失 */ }
-opts.OnReconnecting = func(c client.Client, o *client.ClientOptions) { /* 正在重连 */ }
-opts.OnConnectAttempt = func(server *url.URL, tlsCfg *tls.Config) *tls.Config { /* 每次连接尝试 */ }
+opts.SetQuicConfig(&quic.Config{MaxIdleTimeout: 30 * time.Minute, KeepAlivePeriod: 30 * time.Second})
 ```
 
-### 日志
+### Key options
 
-client 与 server 库都提供 paho 风格的可插拔 `Logger`（接口即 `log.Logger` 的 `Println/Printf`，所以 `*log.Logger` 直接可用）。包级变量默认是 `NOOPLogger`（完全静默）。
+| Option | Default | Description |
+|--------|---------|-------------|
+| `SetCredential(id)` | — | Credential carried in CONNECT; the server authenticates and derives the device identity from it |
+| `SetHeartbeat(d)` | 10s | Heartbeat interval (the server may push a suggested value back in CONNACK) |
+| `SetConnectTimeout(d)` | 30s | Connection handshake timeout |
+| `SetWriteTimeout(d)` | 30s | Write timeout |
+| `AutoReconnect` | true | Auto-reconnect after a lost connection (exponential backoff + jitter) |
+| `ConnectRetry` | true | Retry on initial connect failure |
+| `SetReconnectBase(d)` | 1s | Reconnect backoff base |
+| `SetReconnectJitter(j)` | 0.25 | Reconnect backoff jitter |
+
+### Adaptive heartbeat
+
+A fixed heartbeat cannot serve both low traffic and low latency. When enabled, the client probes with a short period first, then doubles and fine-tunes until it finds the maximum sustainable interval for the current network, settling at ~90% of it; the ceiling is bounded by both `maxSeconds` and the serverKp negotiated in CONNACK:
 
 ```go
-client.SetLogger(log.New(os.Stdout, "", 0))        // 一个 logger 用于全部级别
-client.SetDebugLogger(customLogger)                 // 也可按级别单独设置
-// server 包同样提供 server.SetLogger / SetErrorLogger / SetWarnLogger / SetInfoLogger / SetDebugLogger
+opts.SetAdaptiveHeartbeat(10, 300)               // short=10s, max=300s
+opts.SetProbeCount(3)                            // consecutive successful short heartbeats before probing starts
+opts.SetResponseWindow(2 * time.Second)          // PINGRESP wait window
+opts.SetFineStep(5)                              // fine-tuning step (seconds)
 ```
 
-分级约定：`DEBUG`=心跳收发/adaptive 迁移；`INFO`=CONNACK serverKp/固定心跳配置/adaptive 参数/设备连接；`WARN`=重连/keepalive 超时/adaptive 丢心跳；`ERROR`=握手失败/异常。日志行形如 `[client]   ...` / `[net]     ...`。需要抑制 DEBUG 时，用只输出指定级别（如带 `[INFO]` 前缀过滤的 logger）即可。
+A lost heartbeat in the stable state falls back to the short period and re-adapts. Mutually exclusive with `SetHeartbeat` (adaptive wins).
 
-## 服务端
+### Sending and awaiting results
 
-### 最小示例
+`Push` accepts `string`, `[]byte` or `bytes.Buffer` as payload; results are confirmed asynchronously through the returned `Token`:
+
+```go
+token := c.Push("hello")
+if token.WaitTimeout(2 * time.Second) && token.Error() != nil {
+	log.Printf("push failed: %v", token.Error())
+}
+// or client.WaitTokenTimeout(token, d), which returns client.TimedOut on timeout
+```
+
+### Callbacks
+
+```go
+c.AddPayloadHandlerLast(func(cl client.Client, msg client.Message) { /* PUSH received */ })
+opts.OnConnectionLost = func(c client.Client, err error) { /* connection lost */ }
+opts.OnReconnecting = func(c client.Client, o *client.ClientOptions) { /* reconnecting */ }
+opts.OnConnectAttempt = func(server *url.URL, tlsCfg *tls.Config) *tls.Config { /* per connection attempt */ }
+```
+
+### Logging
+
+Both the client and server libraries provide a paho-style pluggable `Logger` (the interface is just `Println/Printf` of `log.Logger`, so `*log.Logger` works directly). The package-level variables default to `NOOPLogger` (fully silent).
+
+```go
+client.SetLogger(log.New(os.Stdout, "", 0))        // one logger for all levels
+client.SetDebugLogger(customLogger)                 // or set per level
+// the server package offers the same: server.SetLogger / SetErrorLogger / SetWarnLogger / SetInfoLogger / SetDebugLogger
+```
+
+Level conventions: `DEBUG`=heartbeat send/receive and adaptive transitions; `INFO`=CONNACK serverKp/fixed heartbeat config/adaptive parameters/device connections; `WARN`=reconnects/keepalive timeouts/adaptive lost heartbeats; `ERROR`=handshake failures and anomalies. Log lines look like `[client]   ...` / `[net]     ...`. To suppress DEBUG, use a logger that only outputs selected levels (e.g. filtered by the `[INFO]` prefix).
+
+## Server
+
+### Minimal example
 
 ```go
 package main
@@ -117,7 +148,7 @@ type auth struct{}
 
 func (a *auth) Authenticate(credential string) (string, bool) {
 	if len(credential) > 0 {
-		return credential, true // 凭证即设备 ID
+		return credential, true // credential is the device ID
 	}
 	return "", false
 }
@@ -138,56 +169,71 @@ func main() {
 }
 ```
 
-### 多传输监听
+### Listening on multiple transports
 
-通过 `AddListener` 注册额外传输，单进程可同时监听多种传输（TCP 与 KCP 端口空间独立）：
+Register additional transports with `AddListener`; a single process can listen on several transports at once (TCP and KCP port spaces are independent):
 
 ```go
 opts := server.NewServerOptions()
 opts.AddListener(server.NewTCPListener(":18883"))
-opts.AddListener(server.NewKCPListener(":18883"))       // UDP，可与 TCP 同端口
+opts.AddListener(server.NewKCPListener(":18883"))       // UDP, may share the port with TCP
 opts.AddListener(server.NewTLSListener(":18884", tlsCfg))
 opts.AddListener(server.NewQUICListener(":18885", tlsCfg))
 opts.AddListener(server.NewWSListener(":18886", "/ws"))
 opts.AddListener(server.NewWSSListener(":18887", "/ws", tlsCfg))
 ```
 
-> 未调用 `AddListener` 时，默认在 `SetPort` 指定端口监听单个 TCP。
+> Without `AddListener`, the server listens on a single TCP socket on the port set with `SetPort`.
 
-### 服务端接口
+### Server interface
 
 ```go
 type Server interface {
 	ListenAndServe() error
 	ListenAndServeContext(ctx context.Context) error
-	Push(deviceID string, payload []byte) error // 下行推送
-	Kick(deviceID string, reason byte) error    // 强制断开
+	Push(deviceID string, payload []byte) error // downlink push
+	Kick(deviceID string, reason byte) error    // force disconnect
 	Close() error
 }
 ```
 
-### 扩展点
+### Extension points
 
-| 接口 | 职责 |
-|------|------|
-| `Authenticator` | 认证：`Authenticate(credential) (deviceID, ok)`，由应用层注入 |
-| `MessageHandler` | 处理设备上行 PUSH |
-| `ConnectionListener` | 建连/断连事件回调 |
-| `KeepalivePolicy` | 心跳协商策略（默认值见 `DefaultKeepalivePolicy()`） |
+| Interface | Responsibility |
+|-----------|----------------|
+| `Authenticator` | Authentication: `Authenticate(credential) (deviceID, ok)`, injected by the application |
+| `MessageHandler` | Handles device uplink PUSH |
+| `ConnectionListener` | Connection established/closed event callbacks |
+| `KeepalivePolicy` | Heartbeat negotiation policy (defaults from `DefaultKeepalivePolicy()`) |
 
-## 目录结构
+### DISCONNECT reason codes
+
+`Kick(deviceID, reason)` and server-initiated disconnects use the following reason codes:
+
+| Code | Meaning |
+|------|---------|
+| `0x00` | Normal disconnect |
+| `0x01` | Credential expired |
+| `0x02` | Session taken over (same device connected twice) |
+| `0x03` | Server shutdown |
+| `0x04` | Protocol violation |
+| `0x05` | Keepalive timeout |
+| `0x06` | Kicked by admin |
+| `0x07` | Rate limited |
+| `0x08` | Credential rejected |
+| `0xFE` | Unknown error |
+
+## Directory layout
 
 ```
-client/   客户端实现（连接、心跳、重连、Token）
-server/   服务端实现（连接管理、路由、六传输 Listener、Keepalive）
-codec/    RMTT 协议编解码（CONNECT/CONNACK/PUSH/PINGREQ/PINGRESP/DISCONNECT）
-cmd/      可直接运行的最小 client / server 示例
+client/   client implementation (connection, heartbeat, reconnect, Token)
+server/   server implementation (connection management, routing, six-transport Listener, Keepalive)
+codec/    rmtt protocol codec (CONNECT/CONNACK/PUSH/PINGREQ/PINGRESP/DISCONNECT)
+cmd/      runnable minimal client / server examples
 ```
 
-## 测试
+## Tests
 
 ```bash
 go test ./...
 ```
-
-完整跨栈回归（Go↔Java 交叉矩阵）见 `rmtt-example/run.sh`。

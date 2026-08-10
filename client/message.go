@@ -2,6 +2,7 @@ package client
 
 import "github.com/czqu/rmtt-go/codec"
 
+// Message is a PUSH message received from the server.
 type Message interface {
 	Payload() []byte
 }

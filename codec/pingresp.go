@@ -2,6 +2,7 @@ package codec
 
 import "io"
 
+// PingrespPacket is the server's reply to PINGREQ.
 type PingrespPacket struct {
 	FixedHeader
 }

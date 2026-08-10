@@ -8,6 +8,7 @@ import (
 	"github.com/czqu/rmtt-go/codec"
 )
 
+// DeviceConnection is a single authenticated device connection.
 type DeviceConnection interface {
 	DeviceID() string
 	IsActive() bool

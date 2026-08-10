@@ -8,17 +8,22 @@ import (
 	"io"
 )
 
+// ControlPacket is a decoded rmtt packet that can encode itself to a writer
+// and decode its variable header plus payload from a reader.
 type ControlPacket interface {
 	Write(io.Writer) error
 	Unpack(io.Reader) error
 }
 
+// FixedHeader is the frame header: the message type byte and the encoded
+// remaining length of the variable header plus payload.
 type FixedHeader struct {
 	MessageType     byte
 	Flags           byte
 	RemainingLength int
 }
 
+// ReadPacket reads a single full control packet from r.
 func ReadPacket(r io.Reader) (ControlPacket, error) {
 	var fh FixedHeader
 	b := make([]byte, 1)
@@ -106,6 +111,8 @@ func decodeLength(r io.Reader) (int, error) {
 	return int(rLength), nil
 }
 
+// NewControlPacket returns an empty packet of the given type, suitable for
+// encoding; unknown types yield nil.
 func NewControlPacket(packetType byte) ControlPacket {
 	switch packetType {
 	case Connect:
@@ -124,6 +131,8 @@ func NewControlPacket(packetType byte) ControlPacket {
 	return nil
 }
 
+// NewControlPacketWithHeader returns an empty packet of the type carried by
+// fh; unknown types yield an error.
 func NewControlPacketWithHeader(fh FixedHeader) (ControlPacket, error) {
 	switch fh.MessageType {
 	case Connect:

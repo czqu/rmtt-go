@@ -1,5 +1,6 @@
 package codec
 
+// Control packet types.
 const (
 	Connect    = 1
 	Connack    = 2
@@ -9,6 +10,7 @@ const (
 	Disconnect = 14
 )
 
+// CONNACK return codes.
 const (
 	Accepted                     = 0x00
 	ErrRefusedBadProtocolVersion = 0x01
@@ -18,6 +20,7 @@ const (
 	ErrProtocolViolation         = 0xFF
 )
 
+// DISCONNECT reason codes.
 const (
 	DiscNormalDisconnect   byte = 0x00
 	DiscCredentialExpired  byte = 0x01
@@ -31,6 +34,7 @@ const (
 	DiscUnknownError       byte = 0xFE
 )
 
+// ConnackReturnCodes maps CONNACK return codes to human-readable messages.
 var ConnackReturnCodes = map[uint8]string{
 	0:   "Connection Accepted",
 	1:   "Connection Refused: Bad Protocol Version",

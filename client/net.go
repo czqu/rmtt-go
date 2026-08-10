@@ -28,7 +28,7 @@ type quicConn struct {
 // quicConf returns the quic-go transport configuration. When override is nil
 // the library's hardened defaults are used; otherwise the caller's Config is
 // used (SetQuicConfig already guarantees KeepAlivePeriod > 0). Application
-// heartbeats follow spec §9.2 and can legitimately stretch far past quic-go's
+// heartbeats can legitimately stretch far past quic-go's
 // 30s default idle timeout; without a transport-level keepalive an otherwise
 // healthy connection would be torn down during that quiet gap. KeepAlivePeriod
 // emits a lightweight packet periodically so the idle timer never fires.
@@ -213,7 +213,7 @@ func connectServer(conn io.ReadWriter, cm *codec.ConnectPacket, protocolVersion 
 }
 
 func verifyCONNACK(conn io.Reader) (byte, uint16, error) {
-	DEBUG.Println(NET, "connect started")
+	DEBUG.Println(NET, "waiting for CONNACK")
 	ca, err := codec.ReadPacket(conn)
 	if err != nil {
 		ERROR.Println(NET, "connect got error", err)
@@ -392,8 +392,7 @@ func startIncomingComms(conn io.ReadWriter,
 			case *codec.PingrespPacket:
 				DEBUG.Println(NET, "PINGRESP received", time.Now())
 			case *codec.DisconnectPacket:
-				closeMsg, _ := msg.(*codec.DisconnectPacket)
-				c.CloseConnect(closeMsg.GetReturnCode())
+				c.CloseConnect(m.GetReturnCode())
 			}
 		}
 	}()

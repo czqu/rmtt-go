@@ -13,6 +13,8 @@ import (
 	"github.com/czqu/rmtt-go/codec"
 )
 
+// Server is an rmtt server that accepts device connections over its
+// registered listeners, authenticates devices and routes messages.
 type Server interface {
 	ListenAndServe() error
 	ListenAndServeContext(ctx context.Context) error
@@ -33,6 +35,9 @@ type serverImpl struct {
 	conns  map[net.Conn]struct{}
 }
 
+// NewServer creates a Server from the supplied options. A nil options value
+// uses NewServerOptions defaults; when no listener was added via AddListener,
+// a single TCP listener on options.Port is used.
 func NewServer(opts *ServerOptions) Server {
 	if opts == nil {
 		opts = NewServerOptions()
@@ -71,7 +76,7 @@ func (s *serverImpl) ListenAndServeContext(ctx context.Context) error {
 	for _, l := range s.listeners {
 		l := l
 		go func() {
-			INFO.Printf("RMTT server (go) listener starting: %T", l)
+			INFO.Printf("rmtt server (go) listener starting: %T", l)
 			if err := l.Serve(s.ctx, s.handleConnection); err != nil {
 				select {
 				case errCh <- err:
@@ -236,7 +241,7 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 	for {
 		cp, err := codec.ReadPacket(conn)
 		if err != nil {
-			// §6.5: an unrecognised packet type is a protocol violation; reply DISCONNECT(0x04)
+			// An unrecognised packet type is a protocol violation; reply DISCONNECT(0x04)
 			if strings.Contains(err.Error(), "unsupported packet type") {
 				dp := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
 				dp.SetReturnCode(codec.DiscProtocolViolation)

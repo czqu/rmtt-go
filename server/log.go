@@ -10,12 +10,15 @@ type (
 		Printf(format string, v ...interface{})
 	}
 
+	// NOOPLogger discards all log output; it is the default logger.
 	NOOPLogger struct{}
 )
 
 func (NOOPLogger) Println(v ...interface{})               {}
 func (NOOPLogger) Printf(format string, v ...interface{}) {}
 
+// Package-level loggers, one per severity. All default to NOOPLogger; replace
+// them with SetLogger or the per-level setters.
 var (
 	ERROR Logger = NOOPLogger{}
 	INFO  Logger = NOOPLogger{}

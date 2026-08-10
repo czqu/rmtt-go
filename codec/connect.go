@@ -5,6 +5,8 @@ import (
 	"io"
 )
 
+// ConnectPacket is the first packet sent by a client; it carries the magic
+// number, protocol version, keepalive proposal and credential.
 type ConnectPacket struct {
 	FixedHeader
 	MagicNumber     uint32

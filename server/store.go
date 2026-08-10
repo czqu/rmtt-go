@@ -2,17 +2,22 @@ package server
 
 import "sync"
 
+// ConnectionStore tracks the active device connections by device ID. It is
+// safe for concurrent use.
 type ConnectionStore struct {
 	mu    sync.RWMutex
 	conns map[string]DeviceConnection
 }
 
+// NewConnectionStore returns an empty connection store.
 func NewConnectionStore() *ConnectionStore {
 	return &ConnectionStore{
 		conns: make(map[string]DeviceConnection),
 	}
 }
 
+// Register maps deviceID to conn, returning the previous connection for that
+// ID (nil when none).
 func (s *ConnectionStore) Register(deviceID string, conn DeviceConnection) (prev DeviceConnection) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -21,6 +26,7 @@ func (s *ConnectionStore) Register(deviceID string, conn DeviceConnection) (prev
 	return prev
 }
 
+// Get returns the connection registered for deviceID.
 func (s *ConnectionStore) Get(deviceID string) (DeviceConnection, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -28,6 +34,8 @@ func (s *ConnectionStore) Get(deviceID string) (DeviceConnection, bool) {
 	return c, ok
 }
 
+// Remove deletes the mapping for deviceID if and only if the currently
+// registered connection is conn.
 func (s *ConnectionStore) Remove(deviceID string, conn DeviceConnection) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -38,6 +46,7 @@ func (s *ConnectionStore) Remove(deviceID string, conn DeviceConnection) bool {
 	return false
 }
 
+// All returns every registered connection.
 func (s *ConnectionStore) All() []DeviceConnection {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

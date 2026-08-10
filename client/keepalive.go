@@ -73,7 +73,7 @@ func keepalive(c *client, conn io.Writer) {
 	}
 }
 
-// adaptivePhase mirrors the Java AdaptiveHeartbeat state machine (spec §6.5).
+// adaptivePhase mirrors the Java AdaptiveHeartbeat state machine.
 type adaptivePhase int
 
 const (
