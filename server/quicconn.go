@@ -7,8 +7,14 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// quicStreamConn adapts a QUIC bidirectional stream to a net.Conn. Closing the
-// connection closes the stream and the underlying QUIC session.
+// quicStreamConn adapts a single QUIC bidirectional stream to a net.Conn.
+//
+// A QUIC session multiplexes many streams; serveSession accepts each stream
+// independently and hands it to the rmtt handler as a separate device
+// connection. Therefore Close only closes THIS stream — closing the whole
+// session here would tear down every other device sharing the same QUIC
+// connection. The session is closed once by serveSession when AcceptStream
+// stops (peer gone or listener shutdown).
 type quicStreamConn struct {
 	*quic.Stream
 	session *quic.Conn
@@ -43,8 +49,6 @@ func (qc *quicStreamConn) Write(b []byte) (int, error) {
 }
 
 func (qc *quicStreamConn) Close() error {
-	if err := qc.Stream.Close(); err != nil {
-		return err
-	}
-	return qc.session.CloseWithError(0, "")
+	// Only close this stream. The session is owned by serveSession.
+	return qc.Stream.Close()
 }

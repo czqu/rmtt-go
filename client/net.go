@@ -120,6 +120,10 @@ func openConnection(uri *url.URL, tlsc *tls.Config, dialer *net.Dialer, quicConf
 		}
 		stream, err := session.OpenStreamSync(context.Background())
 		if err != nil {
+			// OpenStreamSync failure leaves the QUIC session with no stream;
+			// close it so the underlying UDP socket and goroutines are released
+			// instead of leaking.
+			_ = session.CloseWithError(0, "")
 			return nil, err
 		}
 		return &quicConn{Stream: stream, session: session}, nil
@@ -243,7 +247,16 @@ type commsFns interface {
 	UpdateLastSent()
 	getWriteTimeOut() time.Duration
 	CloseConnect(reason byte)
+	// writeLock/writeUnlock serialize writes to the underlying conn with the
+	// keepalive goroutine's PINGREQ writes (see client.connWriteMu). Every
+	// packet Write in startOutgoingComms must be bracketed by these so the
+	// framed byte stream cannot be corrupted by interleaved writes.
+	writeLock()
+	writeUnlock()
 }
+
+func (c *client) writeLock()   { c.connWriteMu.Lock() }
+func (c *client) writeUnlock() { c.connWriteMu.Unlock() }
 
 func startComms(conn net.Conn,
 	c commsFns,
@@ -434,11 +447,14 @@ func startOutgoingComms(conn net.Conn,
 					}
 				}
 
-				if err := msg.Write(conn); err != nil {
-					ERROR.Println(NET, "outgoing obound reporting error ", err)
-					pub.t.setError(err)
-					if !strings.Contains(err.Error(), closedNetConnErrorText) {
-						errChan <- err
+				c.writeLock()
+				writeErr := msg.Write(conn)
+				c.writeUnlock()
+				if writeErr != nil {
+					ERROR.Println(NET, "outgoing obound reporting error ", writeErr)
+					pub.t.setError(writeErr)
+					if !strings.Contains(writeErr.Error(), closedNetConnErrorText) {
+						errChan <- writeErr
 					}
 					continue
 				}
@@ -457,12 +473,15 @@ func startOutgoingComms(conn net.Conn,
 					continue
 				}
 				DEBUG.Println(NET, "obound priority msg to write, type", reflect.TypeOf(msg.p))
-				if err := msg.p.Write(conn); err != nil {
-					ERROR.Println(NET, "outgoing oboundp reporting error ", err)
+				c.writeLock()
+				writeErr := msg.p.Write(conn)
+				c.writeUnlock()
+				if writeErr != nil {
+					ERROR.Println(NET, "outgoing oboundp reporting error ", writeErr)
 					if msg.t != nil {
-						msg.t.setError(err)
+						msg.t.setError(writeErr)
 					}
-					errChan <- err
+					errChan <- writeErr
 					continue
 				}
 
@@ -477,12 +496,15 @@ func startOutgoingComms(conn net.Conn,
 					continue
 				}
 				DEBUG.Println(NET, "obound from incoming msg to write, type", reflect.TypeOf(msg.p))
-				if err := msg.p.Write(conn); err != nil {
-					ERROR.Println(NET, "outgoing oboundFromIncoming reporting error", err)
+				c.writeLock()
+				writeErr := msg.p.Write(conn)
+				c.writeUnlock()
+				if writeErr != nil {
+					ERROR.Println(NET, "outgoing oboundFromIncoming reporting error", writeErr)
 					if msg.t != nil {
-						msg.t.setError(err)
+						msg.t.setError(writeErr)
 					}
-					errChan <- err
+					errChan <- writeErr
 					continue
 				}
 			}

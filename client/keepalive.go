@@ -10,6 +10,16 @@ import (
 
 var errReceiveTimeout = errors.New("keepalive receive timeout")
 
+// writePingLocked serializes the PINGREQ write with startOutgoingComms via
+// connWriteMu so the framed stream cannot be corrupted by interleaved writes
+// (see the note on client.connWriteMu). conn is io.Writer here; the mutex
+// lives on the *client, so callers pass c in.
+func writePingReq(c *client, conn io.Writer, ping *codec.PingreqPacket) error {
+	c.connWriteMu.Lock()
+	defer c.connWriteMu.Unlock()
+	return ping.Write(conn)
+}
+
 func (c *client) effectiveHeartbeat() int64 {
 	if kp := c.serverKp.Load(); kp > 0 {
 		return kp
@@ -59,7 +69,7 @@ func keepalive(c *client, conn io.Writer) {
 			if time.Since(lastSent) >= time.Duration(heartbeat*int64(time.Second)) {
 				ping := codec.NewControlPacket(codec.Pingreq).(*codec.PingreqPacket)
 				DEBUG.Println(CLI, "keepalive sending ping ", time.Now())
-				if err := ping.Write(conn); err != nil {
+				if err := writePingReq(c, conn, ping); err != nil {
 					ERROR.Println(err)
 				}
 				c.lastSent.Store(time.Now())
@@ -167,7 +177,7 @@ func adaptiveKeepalive(c *client, conn io.Writer) {
 
 	sendProbe := func() {
 		ping := codec.NewControlPacket(codec.Pingreq).(*codec.PingreqPacket)
-		if err := ping.Write(conn); err != nil {
+		if err := writePingReq(c, conn, ping); err != nil {
 			ERROR.Println(CLI, "adaptive heartbeat ping write error:", err)
 		}
 		c.lastSent.Store(time.Now())
@@ -274,7 +284,7 @@ func fixedKeepalive(c *client, conn io.Writer) {
 			}
 			if time.Since(c.lastSent.Load().(time.Time)) >= time.Duration(heartbeat*int64(time.Second)) {
 				ping := codec.NewControlPacket(codec.Pingreq).(*codec.PingreqPacket)
-				if err := ping.Write(conn); err != nil {
+				if err := writePingReq(c, conn, ping); err != nil {
 					ERROR.Println(err)
 				}
 				c.lastSent.Store(time.Now())

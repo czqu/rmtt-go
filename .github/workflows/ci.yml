@@ -20,5 +20,17 @@ jobs:
         run: go build ./cmd/...
       - name: Vet
         run: go vet ./...
+      - name: Gofmt
+        # Fail fast on unformatted Go so style drift never reaches the runner.
+        run: |
+          out=$(gofmt -l . 2>&1)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt would modify the following files:"
+            echo "$out"
+            exit 1
+          fi
       - name: Test
-        run: go test ./...
+        # -race surfaces data races; -timeout fails hangs fast instead of
+        # burning the runner for 10m (a stuck test previously deadlocked the
+        # server package until the default alarm fired).
+        run: go test -race -timeout 5m ./...
