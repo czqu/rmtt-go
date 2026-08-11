@@ -18,7 +18,7 @@ import (
 
 // freePort reserves a listening port and returns it after closing the socket,
 // so the server under test can bind the same port.
-func freePort(t *testing.T) int {
+func freePort(t testing.TB) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -44,7 +44,7 @@ type harness struct {
 
 // newHarness starts a real rmtt-go server on a random port with the given
 // keepalive policy. Devices are authenticated by their credential.
-func newHarness(t *testing.T, policy *server.KeepalivePolicy) *harness {
+func newHarness(t testing.TB, policy *server.KeepalivePolicy) *harness {
 	t.Helper()
 	h := &harness{connLost: make(chan struct{}, 1)}
 	port := freePort(t)
@@ -130,7 +130,7 @@ func (l testListener) OnConnectionClosed(deviceID string, reason string) {
 
 // connectClient dials addr with the given credential and waits for the
 // CONNACK, returning a ready Client.
-func connectClient(t *testing.T, addr, cred string, heartbeat time.Duration) client.Client {
+func connectClient(t testing.TB, addr, cred string, heartbeat time.Duration) client.Client {
 	t.Helper()
 	o := client.NewClientOptions()
 	o.Servers = nil
@@ -157,7 +157,7 @@ func connectClient(t *testing.T, addr, cred string, heartbeat time.Duration) cli
 }
 
 // waitFor polls cond until it holds or the timeout elapses.
-func waitFor(t *testing.T, cond func() bool, what string) {
+func waitFor(t testing.TB, cond func() bool, what string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

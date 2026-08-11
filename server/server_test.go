@@ -42,7 +42,7 @@ func newTestServer(opts *ServerOptions) *serverImpl {
 	}
 }
 
-func readConnack(t *testing.T, c net.Conn) *codec.ConnackPacket {
+func readConnack(t testing.TB, c net.Conn) *codec.ConnackPacket {
 	t.Helper()
 	cp, err := codec.ReadPacket(c)
 	if err != nil {
