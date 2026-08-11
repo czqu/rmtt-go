@@ -92,7 +92,7 @@ func (l *quicListener) Serve(ctx context.Context, handler func(net.Conn)) error 
 
 // serveSession accepts bidirectional streams from a QUIC connection; each stream
 // is treated as one rmtt device connection.
-func (l *quicListener) serveSession(ctx context.Context, session quic.Connection, handler func(net.Conn)) {
+func (l *quicListener) serveSession(ctx context.Context, session *quic.Conn, handler func(net.Conn)) {
 	for {
 		stream, err := session.AcceptStream(ctx)
 		if err != nil {

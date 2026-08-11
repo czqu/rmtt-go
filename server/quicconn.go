@@ -10,8 +10,8 @@ import (
 // quicStreamConn adapts a QUIC bidirectional stream to a net.Conn. Closing the
 // connection closes the stream and the underlying QUIC session.
 type quicStreamConn struct {
-	quic.Stream
-	session quic.Connection
+	*quic.Stream
+	session *quic.Conn
 }
 
 func (qc *quicStreamConn) LocalAddr() net.Addr {

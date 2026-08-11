@@ -21,8 +21,8 @@ import (
 const closedNetConnErrorText = "use of closed network connection"
 
 type quicConn struct {
-	quic.Stream
-	session quic.Connection
+	*quic.Stream
+	session *quic.Conn
 }
 
 // quicConf returns the quic-go transport configuration. When override is nil
