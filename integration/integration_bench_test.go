@@ -5,7 +5,9 @@
 package integration_test
 
 import (
+	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -107,6 +109,82 @@ func BenchmarkUplinkPushParallel(b *testing.B) {
 					}
 				}
 			})
+		})
+	}
+}
+
+// BenchmarkBidirectionalPush drives uplink (client -> server) and downlink
+// (server -> client) concurrently over the same connection, so uplink writes
+// contend with downlink reads on the socket the way a real bidirectional
+// telemetry session does. Each direction performs b.N/2 pushes (>=1), and the
+// server routes every downlink push through the real ConnectionStore.
+func BenchmarkBidirectionalPush(b *testing.B) {
+	for _, size := range []int{64, 1024, 4096} {
+		b.Run("payload="+fmt.Sprint(size), func(b *testing.B) {
+			env := newBenchEnv(b)
+			payload := make([]byte, size)
+
+			// Count downlink messages the client actually drains, so we measure
+			// the full path and not just the server-side socket write.
+			var received atomic.Int64
+			env.c.AddPayloadHandlerLast(func(cl client.Client, msg client.Message) {
+				received.Add(1)
+			})
+
+			half := b.N / 2
+			if half < 1 {
+				half = 1
+			}
+
+			b.SetBytes(int64(size))
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			var wg sync.WaitGroup
+			wg.Add(2)
+			// Errors are collected on a channel instead of calling b.Fatal inside
+			// the goroutines: go vet's testinggoroutine check rejects that, and
+			// Fatal only Goexits the calling goroutine, which could deadlock the
+			// WaitGroup.
+			errCh := make(chan error, 2)
+			go func() { // uplink producer
+				defer wg.Done()
+				for i := 0; i < half; i++ {
+					tok := env.c.Push(payload)
+					if !tok.WaitTimeout(5 * time.Second) {
+						errCh <- errors.New("uplink push timed out")
+						return
+					}
+				}
+				errCh <- nil
+			}()
+			go func() { // downlink producer
+				defer wg.Done()
+				for i := 0; i < half; i++ {
+					if err := env.h.srv.Push("bench-dev", payload); err != nil {
+						errCh <- err
+						return
+					}
+				}
+				errCh <- nil
+			}()
+			wg.Wait()
+			for i := 0; i < 2; i++ {
+				if err := <-errCh; err != nil {
+					b.Fatalf("bidirectional push failed: %v", err)
+				}
+			}
+
+			// Ensure the client drained every downlink message.
+			b.StopTimer()
+			deadline := time.Now().Add(5 * time.Second)
+			for received.Load() < int64(half) && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			b.StartTimer()
+			if got := received.Load(); got != int64(half) {
+				b.Fatalf("client received %d/%d downlink messages", got, half)
+			}
 		})
 	}
 }

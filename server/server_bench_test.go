@@ -19,19 +19,25 @@ import (
 // a background goroutine so the server's writes never block.
 func startBenchConnection(b *testing.B) *serverImpl {
 	b.Helper()
-	srv := newTestServer(NewServerOptions())
+	// Disable the server-side keepalive reaper: the benchmark only pushes
+	// downlink and never sends another client packet, so an enabled reaper
+	// (default 60s * 1.5 = 90s) would stall every sub-benchmark's teardown.
+	srv := newTestServer(NewServerOptions().SetKeepalivePolicy(&KeepalivePolicy{AllowDisable: true}))
 	serverSide, clientSide := net.Pipe()
-	b.Cleanup(func() {
-		serverSide.Close()
-		clientSide.Close()
-	})
 
 	done := make(chan struct{})
 	go func() {
 		srv.handleConnection(serverSide)
 		close(done)
 	}()
-	b.Cleanup(func() { <-done })
+	// b.Cleanup runs LIFO, so close the pipes first (unblocking the server's
+	// read loop) before waiting on handleConnection to return. Ordering this
+	// two separate Cleanup calls would wait on done before closing, hanging.
+	b.Cleanup(func() {
+		serverSide.Close()
+		clientSide.Close()
+		<-done
+	})
 
 	if err := sendConnect(clientSide, 0x637a7175, 1, "bench-dev"); err != nil {
 		b.Fatal(err)
@@ -39,6 +45,11 @@ func startBenchConnection(b *testing.B) *serverImpl {
 	if ca := readConnack(b, clientSide); ca.ReturnCode != codec.Accepted {
 		b.Fatalf("CONNACK ReturnCode = 0x%x", ca.ReturnCode)
 	}
+	// The server writes CONNACK before registering the device in its store, so
+	// reading CONNACK alone does not guarantee Get("bench-dev") succeeds. Wait
+	// for registration, otherwise the first Push can race ahead and fail with
+	// "device bench-dev not connected" (flaky, especially for larger payloads).
+	waitRegistered(b, srv, "bench-dev")
 
 	// Drain the client side in the background so the server's writes are not
 	// held up by our (very fast) benchmark loop.
