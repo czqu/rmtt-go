@@ -61,7 +61,7 @@ func readConnack(t testing.TB, c net.Conn) *codec.ConnackPacket {
 // store yet — session-takeover tests need the first connection registered
 // before opening the second, otherwise the second CONNECT can race ahead and
 // register first, sending the takeover DISCONNECT to the wrong client end.
-func waitRegistered(t *testing.T, srv *serverImpl, deviceID string) {
+func waitRegistered(t testing.TB, srv *serverImpl, deviceID string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
