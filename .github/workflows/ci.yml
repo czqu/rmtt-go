@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Build cmd
+        run: go build ./cmd/...
+      - name: Vet
+        run: go vet ./...
+      - name: Gofmt
+        # Fail fast on unformatted Go so style drift never reaches the runner.
+        run: |
+          out=$(gofmt -l . 2>&1)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt would modify the following files:"
+            echo "$out"
+            exit 1
+          fi
+      - name: Test
+        # -race surfaces data races; -timeout fails hangs fast instead of
+        # burning the runner for 10m (a stuck test previously deadlocked the
+        # server package until the default alarm fired).
+        run: go test -race -timeout 5m ./...
+      - name: Benchmark
+        # Smoke-run every benchmark once (-benchtime=1x) so a broken or
+        # panicking benchmark fails CI. -run=^$ skips the (already-covered)
+        # unit tests; -benchmem asserts the allocation-reporting path works.
+        # CI does not collect stable numbers — that belongs in a dedicated
+        # bench harness, not a per-PR runner.
+        run: go test -run=^$ -bench=. -benchmem -benchtime=1x ./...

@@ -153,8 +153,7 @@ func NewControlPacketWithHeader(fh FixedHeader) (ControlPacket, error) {
 
 func decodeByte(b io.Reader) (byte, error) {
 	num := make([]byte, 1)
-	_, err := b.Read(num)
-	if err != nil {
+	if _, err := io.ReadFull(b, num); err != nil {
 		return 0, err
 	}
 	return num[0], nil
@@ -168,8 +167,7 @@ func encodeUint32(num uint32) []byte {
 
 func decodeUint32(b io.Reader) (uint32, error) {
 	num := make([]byte, 4)
-	_, err := b.Read(num)
-	if err != nil {
+	if _, err := io.ReadFull(b, num); err != nil {
 		return 0, err
 	}
 	return binary.BigEndian.Uint32(num), nil
@@ -183,8 +181,7 @@ func encodeUint16(num uint16) []byte {
 
 func decodeUint16(b io.Reader) (uint16, error) {
 	num := make([]byte, 2)
-	_, err := b.Read(num)
-	if err != nil {
+	if _, err := io.ReadFull(b, num); err != nil {
 		return 0, err
 	}
 	return binary.BigEndian.Uint16(num), nil
@@ -197,11 +194,9 @@ func decodeBytes(b io.Reader) ([]byte, error) {
 	}
 
 	field := make([]byte, fieldLength)
-	_, err = b.Read(field)
-	if err != nil {
+	if _, err := io.ReadFull(b, field); err != nil {
 		return nil, err
 	}
-
 	return field, nil
 }
 

@@ -205,8 +205,15 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 
 	dc := newDeviceConnection(conn, deviceID)
 	if prev := s.store.Register(deviceID, dc); prev != nil {
-		prev.SendDisconnect(codec.DiscSessionTakenOver)
-		prev.Close()
+		// Tear down the superseded connection asynchronously so a slow/stuck
+		// old client cannot delay the new connection that just won the
+		// takeover. SendDisconnect is bounded by writeTimeout; Close then
+		// unblocks the old connection's read loop. prev is already replaced
+		// in the store, so this goroutine owns its teardown.
+		go func(prev DeviceConnection) {
+			prev.SendDisconnect(codec.DiscSessionTakenOver)
+			prev.Close()
+		}(prev)
 	}
 
 	s.options.ConnectionListener.OnConnectionEstablished(deviceID)
