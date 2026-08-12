@@ -80,7 +80,12 @@ func (l *wsListener) Serve(ctx context.Context, handler func(net.Conn)) error {
 
 func (l *wsListener) Close() error {
 	if l.srv != nil {
-		return l.srv.Close()
+		// Match Serve's ctx-cancel path: a graceful Shutdown lets in-flight
+		// websocket handshakes finish (up to 5s) instead of hard-closing
+		// mid-handshake, which previously left clients with a bare EOF.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return l.srv.Shutdown(ctx)
 	}
 	return nil
 }

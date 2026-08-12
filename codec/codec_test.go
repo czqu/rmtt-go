@@ -224,24 +224,68 @@ func TestDecodeUint16(t *testing.T) {
 
 func TestDecodeBytes(t *testing.T) {
 	tests := []struct {
+		name     string
 		data     []byte
 		expected []byte
 		err      error
 	}{
-		{[]byte{0x00, 0x00}, nil, io.EOF},
-		{[]byte{0x00, 0x03, 0x01, 0x02, 0x03}, []byte{0x01, 0x02, 0x03}, nil},
+		// A zero-length field is valid (e.g. empty Credential); io.ReadFull on
+		// an empty slice returns nil without touching the reader.
+		{"zero-length", []byte{0x00, 0x00}, []byte{}, nil},
+		{"normal", []byte{0x00, 0x03, 0x01, 0x02, 0x03}, []byte{0x01, 0x02, 0x03}, nil},
+		// Short read: length says 3 but only 1 byte follows -> ErrUnexpectedEOF,
+		// not silent truncation.
+		{"short", []byte{0x00, 0x03, 0x01}, nil, io.ErrUnexpectedEOF},
 	}
 
 	for _, tt := range tests {
-		buf := bytes.NewReader(tt.data)
-		result, err := decodeBytes(buf)
-		if !errors.Is(err, tt.err) {
-			t.Fatalf("decodeBytes() error = %v, want %v", err, tt.err)
-		}
-		if err == nil && !bytes.Equal(result, tt.expected) {
-			t.Errorf("decodeBytes(%v) = %v, want %v", tt.data, result, tt.expected)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			buf := bytes.NewReader(tt.data)
+			result, err := decodeBytes(buf)
+			if !errors.Is(err, tt.err) {
+				t.Fatalf("decodeBytes() error = %v, want %v", err, tt.err)
+			}
+			if err == nil && !bytes.Equal(result, tt.expected) {
+				t.Errorf("decodeBytes(%v) = %v, want %v", tt.data, result, tt.expected)
+			}
+		})
 	}
+}
+
+// TestDecodeShortRead verifies the decoders no longer silently accept partial
+// data from a reader that returns short reads; io.ReadFull must surface an
+// error so protocol fields cannot be mis-parsed from truncated input.
+func TestDecodeShortRead(t *testing.T) {
+	// oneByteAtATimeReader returns at most one byte per Read, surfacing
+	// implementations that assumed Read fills the buffer.
+	r := &oneByteAtATimeReader{data: []byte{0x01, 0x02}}
+	v, err := decodeUint16(r)
+	if err != nil {
+		t.Fatalf("decodeUint16 short-read error = %v", err)
+	}
+	if v != 0x0102 {
+		t.Fatalf("decodeUint16 = 0x%04x, want 0x0102", v)
+	}
+
+	// Truncated uint32 must error rather than return padded zeros.
+	r2 := &oneByteAtATimeReader{data: []byte{0x01}}
+	if _, err := decodeUint32(r2); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("decodeUint32 truncated err = %v, want io.ErrUnexpectedEOF", err)
+	}
+}
+
+type oneByteAtATimeReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *oneByteAtATimeReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.pos:r.pos+1])
+	r.pos++
+	return n, nil
 }
 
 func TestEncodeBytes(t *testing.T) {
@@ -280,22 +324,29 @@ func TestEncodeString(t *testing.T) {
 
 func TestDecodeString(t *testing.T) {
 	tests := []struct {
+		name     string
 		data     []byte
 		expected string
 		err      error
 	}{
-		{[]byte{0x00}, "", io.EOF},
-		{[]byte{0x00, 0x03, 'a', 'b', 'c'}, "abc", nil},
+		// Truncated length prefix (1 byte of 2) -> ErrUnexpectedEOF.
+		{"truncated-len", []byte{0x00}, "", io.ErrUnexpectedEOF},
+		{"empty", []byte{0x00, 0x00}, "", nil},
+		{"normal", []byte{0x00, 0x03, 'a', 'b', 'c'}, "abc", nil},
+		// Length says 3 but only 2 bytes follow -> ErrUnexpectedEOF.
+		{"truncated-body", []byte{0x00, 0x03, 'a', 'b'}, "", io.ErrUnexpectedEOF},
 	}
 
 	for _, tt := range tests {
-		buf := bytes.NewReader(tt.data)
-		result, err := decodeString(buf)
-		if !errors.Is(err, tt.err) {
-			t.Fatalf("decodeString() error = %v, want %v", err, tt.err)
-		}
-		if result != tt.expected {
-			t.Errorf("decodeString(%v) = %v, want %v", tt.data, result, tt.expected)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			buf := bytes.NewReader(tt.data)
+			result, err := decodeString(buf)
+			if !errors.Is(err, tt.err) {
+				t.Fatalf("decodeString() error = %v, want %v", err, tt.err)
+			}
+			if err == nil && result != tt.expected {
+				t.Errorf("decodeString(%v) = %v, want %v", tt.data, result, tt.expected)
+			}
+		})
 	}
 }

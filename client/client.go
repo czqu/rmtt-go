@@ -30,15 +30,22 @@ type client struct {
 	status         connectionStatus
 	conn           net.Conn
 	connMu         sync.Mutex
-	stop           chan struct{}
-	lastSent       atomic.Value
-	lastReceived   atomic.Value
-	serverKp       atomic.Int64
-	workers        sync.WaitGroup
-	obound         chan *PacketAndToken
-	oboundP        chan *PacketAndToken
-	commsStopped   chan struct{}
-	backoff        *backoffController
+	// connWriteMu serializes all writes to conn. The keepalive goroutine
+	// writes PINGREQ directly to conn while startOutgoingComms writes
+	// PUSH/DISCONNECT/PINGREQ via the obound channels; without serialization
+	// a packet whose codec.Write issues multiple Write syscalls (bytes.Buffer
+	// .WriteTo) could be interleaved with a keepalive PINGREQ, corrupting the
+	// framed byte stream the peer is parsing.
+	connWriteMu  sync.Mutex
+	stop         chan struct{}
+	lastSent     atomic.Value
+	lastReceived atomic.Value
+	serverKp     atomic.Int64
+	workers      sync.WaitGroup
+	obound       chan *PacketAndToken
+	oboundP      chan *PacketAndToken
+	commsStopped chan struct{}
+	backoff      *backoffController
 }
 
 // NewClient creates a Client from the given options. The options value is
@@ -296,20 +303,23 @@ func (c *client) attemptConnection() (net.Conn, byte, error) {
 	}
 	if rc == codec.ErrRefusedBadProtocolVersion {
 		ERROR.Println(CLI, "Server does not support protocol version")
-		c.Disconnect(100)
+		// The connection has never been handed to startWorkers (c.conn is still
+		// nil), so c.Disconnect would be a no-op and leak the underlying conn.
+		// Close it directly.
+		_ = conn.Close()
 		err = RefusedBadProtocolVersionErr
 		return conn, rc, err
 	}
 	if rc == codec.ErrRefusedNotAuthorised {
 		ERROR.Println(CLI, "The server has rejected our request. Please check your permissions")
-		c.Disconnect(100)
+		_ = conn.Close()
 		err = RefusedNotAuthorisedErr
 		return conn, rc, err
 	}
 	if rc == codec.ErrProtocolViolation {
 		ERROR.Println(CLI, "Unsupported server protocol version ")
+		_ = conn.Close()
 		err = ProtocolViolationErr
-		c.Disconnect(100)
 		return conn, rc, err
 	}
 
@@ -500,7 +510,6 @@ func (h *handler) dispatch(messages <-chan *codec.PushPacket, client *client) <-
 		for message := range messages {
 			h.RLock()
 			m := messageFromPush(message, ackFunc(ackInChan, message))
-			var handlers []MessageHandler
 			for e := h.handlers.Front(); e != nil; e = e.Next() {
 				hd := e.Value.(MessageHandler)
 				wg.Add(1)
@@ -510,9 +519,6 @@ func (h *handler) dispatch(messages <-chan *codec.PushPacket, client *client) <-
 				}()
 			}
 			h.RUnlock()
-			for _, handler := range handlers {
-				handler(client, m)
-			}
 		}
 		close(stopAckCopy)
 		<-ackCopyStopped

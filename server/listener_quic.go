@@ -91,8 +91,15 @@ func (l *quicListener) Serve(ctx context.Context, handler func(net.Conn)) error 
 }
 
 // serveSession accepts bidirectional streams from a QUIC connection; each stream
-// is treated as one rmtt device connection.
-func (l *quicListener) serveSession(ctx context.Context, session quic.Connection, handler func(net.Conn)) {
+// is treated as one rmtt device connection. The session is owned by this
+// goroutine: when AcceptStream stops (peer closed, listener shutdown, or
+// context cancel) the session is closed once here so its UDP socket and
+// goroutines are released — individual stream conns only close their own
+// stream (see quicStreamConn.Close).
+func (l *quicListener) serveSession(ctx context.Context, session *quic.Conn, handler func(net.Conn)) {
+	defer func() {
+		_ = session.CloseWithError(0, "")
+	}()
 	for {
 		stream, err := session.AcceptStream(ctx)
 		if err != nil {

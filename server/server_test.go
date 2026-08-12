@@ -42,7 +42,7 @@ func newTestServer(opts *ServerOptions) *serverImpl {
 	}
 }
 
-func readConnack(t *testing.T, c net.Conn) *codec.ConnackPacket {
+func readConnack(t testing.TB, c net.Conn) *codec.ConnackPacket {
 	t.Helper()
 	cp, err := codec.ReadPacket(c)
 	if err != nil {
@@ -53,6 +53,26 @@ func readConnack(t *testing.T, c net.Conn) *codec.ConnackPacket {
 		t.Fatalf("got %T, want *codec.ConnackPacket", cp)
 	}
 	return ca
+}
+
+// waitRegistered polls the store until deviceID is registered, failing the
+// test after a short timeout. The server sends CONNACK before registering the
+// connection, so reading CONNACK alone does not guarantee the device is in the
+// store yet — session-takeover tests need the first connection registered
+// before opening the second, otherwise the second CONNECT can race ahead and
+// register first, sending the takeover DISCONNECT to the wrong client end.
+func waitRegistered(t testing.TB, srv *serverImpl, deviceID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := srv.store.Get(deviceID); ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("device %s did not register within 2s", deviceID)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func sendConnect(c net.Conn, magic uint32, version byte, credential string) error {
@@ -269,6 +289,10 @@ func TestServer_HandleConnection_SessionTakeover(t *testing.T) {
 	if ca := readConnack(t, clientSide1); ca.ReturnCode != codec.Accepted {
 		t.Fatalf("first CONNACK ReturnCode = 0x%x, want Accepted", ca.ReturnCode)
 	}
+
+	// Ensure the first connection is registered before opening the second, so
+	// the takeover target is deterministic.
+	waitRegistered(t, srv, "dev")
 
 	if err := sendConnect(clientSide2, 0x637a7175, 1, "dev"); err != nil {
 		t.Fatalf("second CONNECT write error: %v", err)
