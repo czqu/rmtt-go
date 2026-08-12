@@ -1,0 +1,75 @@
+name: E2E (language matrix)
+
+# Cross-language end-to-end matrix: verifies rmtt-go interoperates with the
+# published Java and Rust stacks over a real TCP connection.
+#
+#   server=go   client=java   Go server <-> Java client (rmtt-client-netty 1.0.1)
+#   server=go   client=rust   Go server <-> Rust client (rmtt 0.1.0)
+#   server=java client=go     Java server (rmtt-server-netty 1.0.1) <-> Go client
+#
+# Each combination starts the server, waits for its READY line, runs the
+# client and asserts the client's PASS marker (echo round-trip verified).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  e2e:
+    name: e2e (${{ matrix.server }} server / ${{ matrix.client }} client)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - server: go
+            client: java
+          - server: go
+            client: rust
+          - server: java
+            client: go
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Set up Rust
+        if: matrix.client == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+
+      # ---- build the server side ----
+      - name: Build Go server
+        if: matrix.server == 'go'
+        run: go build -o e2e/bin/go-server ./e2e/go-server
+
+      - name: Build Java server
+        if: matrix.server == 'java'
+        run: mvn -B -ntp -f e2e/java-server/pom.xml package
+
+      # ---- build the client side ----
+      - name: Build Go client
+        if: matrix.client == 'go'
+        run: go build -o e2e/bin/go-client ./e2e/go-client
+
+      - name: Build Java client
+        if: matrix.client == 'java'
+        run: mvn -B -ntp -f e2e/java-client/pom.xml package
+
+      - name: Build Rust client
+        if: matrix.client == 'rust'
+        run: cargo build --release --manifest-path e2e/rust-client/Cargo.toml
+
+      # ---- run the pair ----
+      - name: Run E2E
+        run: bash e2e/run_e2e.sh ${{ matrix.server }} ${{ matrix.client }}
