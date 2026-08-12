@@ -1,0 +1,9 @@
+[package]
+name = "rmtt-rust-e2e"
+version = "0.1.0"
+edition = "2021"
+
+# Cross-language E2E: Rust client against the Go rmtt server. Pulls the
+# published rmtt 0.1.0 crate from crates.io (https://crates.io/crates/rmtt).
+[dependencies]
+rmtt = "0.1.0"
