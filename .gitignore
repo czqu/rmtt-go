@@ -1,1 +1,8 @@
 .idea
+
+# Cross-language E2E build artifacts (built by CI / remote harness)
+e2e/bin/
+e2e/java-client/target/
+e2e/java-server/target/
+e2e/rust-client/target/
+e2e/rust-client/Cargo.lock
