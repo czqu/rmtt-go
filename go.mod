@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/quic-go/quic-go v0.59.1
 	github.com/xtaci/kcp-go v5.4.20+incompatible
-	golang.org/x/net v0.55.0
+	golang.org/x/net v0.58.0
 )
 
 require (
@@ -16,6 +16,6 @@ require (
 	github.com/templexxx/xor v0.0.0-20191217153810-f85b25db303b // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/xtaci/lossyconn v1.0.0 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 )
