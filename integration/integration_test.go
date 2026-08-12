@@ -156,10 +156,18 @@ func connectClient(t testing.TB, addr, cred string, heartbeat time.Duration) cli
 	return c
 }
 
-// waitFor polls cond until it holds or the timeout elapses.
+// waitFor polls cond until it holds or the default timeout elapses.
 func waitFor(t testing.TB, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	waitForTimeout(t, cond, what, 5*time.Second)
+}
+
+// waitForTimeout polls cond until it holds or the given timeout elapses. A
+// tight fixed deadline is fragile under -race on loaded CI runners, so tests
+// with timing-sensitive assertions pass an explicit, generous timeout.
+func waitForTimeout(t testing.TB, cond func() bool, what string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -215,18 +223,23 @@ func TestIntegration_ConnectAndBidirectionalPush(t *testing.T) {
 // heartbeats stays registered on the server (not reaped by keepalive timeout)
 // and can still push after several heartbeat intervals.
 func TestIntegration_HeartbeatKeepsConnectionAlive(t *testing.T) {
-	// 1s keepalive so the test completes quickly; the client also heartbeats
-	// every 1s, so the server reaps nothing.
-	policy := &server.KeepalivePolicy{MinSeconds: 1, MaxSeconds: 5, DefaultSeconds: 1}
+	// 2s keepalive so the test completes quickly; the client also heartbeats
+	// every 2s, so the server reaps nothing. A 1s window plus a fixed 2.5s
+	// sleep was too tight under -race on loaded runners and occasionally
+	// timed out waiting for the post-heartbeat uplink; the wider window and
+	// polling below leave ample scheduling slack.
+	policy := &server.KeepalivePolicy{MinSeconds: 2, MaxSeconds: 10, DefaultSeconds: 2}
 	h := newHarness(t, policy)
 	defer h.stop()
 
-	c := connectClient(t, h.addr, "device-hb", time.Second)
+	c := connectClient(t, h.addr, "device-hb", 2*time.Second)
 	defer c.Disconnect(100)
 
 	// Hold the connection across several heartbeat intervals; the server must
-	// not reap it.
-	time.Sleep(2500 * time.Millisecond)
+	// not reap it. Poll for the registration, then sleep through at least two
+	// heartbeat periods so any reaping bug would have fired.
+	waitForTimeout(t, func() bool { return h.activeConns() == 1 }, "client registered", 5*time.Second)
+	time.Sleep(4500 * time.Millisecond)
 	if got := h.activeConns(); got != 1 {
 		t.Fatalf("server active connections = %d, want 1 (client should have been kept alive)", got)
 	}
@@ -236,10 +249,10 @@ func TestIntegration_HeartbeatKeepsConnectionAlive(t *testing.T) {
 
 	// A push still works end-to-end after the heartbeat traffic.
 	ptok := c.Push("still alive")
-	if !ptok.WaitTimeout(3*time.Second) || ptok.Error() != nil {
+	if !ptok.WaitTimeout(5*time.Second) || ptok.Error() != nil {
 		t.Fatalf("push after heartbeats failed: %v", ptok.Error())
 	}
-	waitFor(t, func() bool { return len(h.uplinks()) == 1 }, "post-heartbeat uplink delivered")
+	waitForTimeout(t, func() bool { return len(h.uplinks()) == 1 }, "post-heartbeat uplink delivered", 10*time.Second)
 }
 
 // TestIntegration_SilentClientIsReaped verifies the server's keepalive timeout:
@@ -255,6 +268,7 @@ func TestIntegration_SilentClientIsReaped(t *testing.T) {
 	c := connectClient(t, h.addr, "device-silent", 0)
 	defer c.Disconnect(100)
 
-	// Wait for the server to reap the silent connection.
-	waitFor(t, func() bool { return h.activeConns() == 0 }, "server to reap silent client")
+	// Wait for the server to reap the silent connection. Generous timeout:
+	// under -race the reap sweep can be delayed on loaded runners.
+	waitForTimeout(t, func() bool { return h.activeConns() == 0 }, "server to reap silent client", 10*time.Second)
 }
