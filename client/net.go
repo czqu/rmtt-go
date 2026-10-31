@@ -156,12 +156,6 @@ func verifyCONNACK(conn io.Reader) (byte, uint16, error) {
 	return msg.ReturnCode, msg.ServerKeepalive, nil
 }
 
-func ackFunc(oboundP chan *PacketAndToken, packet *codec.PushPacket) func() {
-	return func() {
-		// do nothing, since there is no need to send an ack packet back
-	}
-}
-
 type commsFns interface {
 	UpdateLastReceived()
 	UpdateLastSent()
@@ -180,14 +174,12 @@ func (c *client) writeUnlock() { c.connWriteMu.Unlock() }
 
 func startComms(conn net.Conn,
 	c commsFns,
-	inboundFromStore <-chan codec.ControlPacket,
 	oboundp <-chan *PacketAndToken,
 	obound <-chan *PacketAndToken,
 ) (<-chan *codec.PushPacket, <-chan error) {
-	ibound := startIncomingComms(conn, c, inboundFromStore)
-	outboundFromIncoming := make(chan *PacketAndToken)
+	ibound := startIncomingComms(conn, c)
 
-	oboundErr := startOutgoingComms(conn, c, oboundp, obound, outboundFromIncoming)
+	oboundErr := startOutgoingComms(conn, c, oboundp, obound)
 	DEBUG.Println(NET, "startComms started")
 
 	var wg sync.WaitGroup
@@ -202,17 +194,12 @@ func startComms(conn net.Conn,
 				outError <- ic.err
 				continue
 			}
-			if ic.outbound != nil {
-				outboundFromIncoming <- ic.outbound
-				continue
-			}
 			if ic.incomingPub != nil {
 				outPublish <- ic.incomingPub
 				continue
 			}
 			ERROR.Println("startComms received empty incomingComms msg")
 		}
-		close(outboundFromIncoming)
 		close(outPublish)
 		wg.Done()
 	}()
@@ -235,7 +222,6 @@ func startComms(conn net.Conn,
 
 type incomingComms struct {
 	err         error
-	outbound    *PacketAndToken
 	incomingPub *codec.PushPacket
 }
 
@@ -274,49 +260,20 @@ func startIncoming(conn io.ReadWriter) <-chan inbound {
 	return ibound
 }
 
-func startIncomingComms(conn io.ReadWriter,
-	c commsFns,
-	inboundFromStore <-chan codec.ControlPacket,
-) <-chan incomingComms {
+func startIncomingComms(conn io.ReadWriter, c commsFns) <-chan incomingComms {
 	ibound := startIncoming(conn)
 	output := make(chan incomingComms)
 
 	DEBUG.Println(NET, "startIncomingComms started")
 	go func() {
-		for {
-			if inboundFromStore == nil && ibound == nil {
-				close(output)
-				DEBUG.Println(NET, "startIncomingComms goroutine complete")
-				return
+		for ibMsg := range ibound {
+			DEBUG.Println(NET, "startIncomingComms: got msg on ibound")
+			if ibMsg.err != nil {
+				output <- incomingComms{err: ibMsg.err}
+				continue
 			}
-			DEBUG.Println(NET, "logic waiting for msg on ibound")
-
-			var msg codec.ControlPacket
-			var ok bool
-			select {
-			case msg, ok = <-inboundFromStore:
-				if !ok {
-					DEBUG.Println(NET, "startIncomingComms: inboundFromStore complete")
-					inboundFromStore = nil
-					continue
-				}
-				DEBUG.Println(NET, "startIncomingComms: got msg from store")
-			case ibMsg, ok := <-ibound:
-				if !ok {
-					DEBUG.Println(NET, "startIncomingComms: ibound complete")
-					ibound = nil
-					continue
-				}
-				DEBUG.Println(NET, "startIncomingComms: got msg on ibound")
-				if ibMsg.err != nil {
-					output <- incomingComms{err: ibMsg.err}
-					continue
-				}
-				msg = ibMsg.cp
-				c.UpdateLastReceived()
-			}
-
-			switch m := msg.(type) {
+			c.UpdateLastReceived()
+			switch m := ibMsg.cp.(type) {
 			case *codec.PushPacket:
 				DEBUG.Println(NET, "startIncomingComms: received publish")
 				output <- incomingComms{incomingPub: m}
@@ -328,6 +285,8 @@ func startIncomingComms(conn io.ReadWriter,
 				c.CloseConnect(m.GetReturnCode())
 			}
 		}
+		close(output)
+		DEBUG.Println(NET, "startIncomingComms goroutine complete")
 	}()
 	return output
 }
@@ -336,7 +295,6 @@ func startOutgoingComms(conn net.Conn,
 	c commsFns,
 	oboundp <-chan *PacketAndToken,
 	obound <-chan *PacketAndToken,
-	oboundFromIncoming <-chan *PacketAndToken,
 ) <-chan error {
 	errChan := make(chan error)
 	DEBUG.Println(NET, "outgoing started")
@@ -345,7 +303,7 @@ func startOutgoingComms(conn net.Conn,
 		for {
 			DEBUG.Println(NET, "outgoing waiting for an outbound message")
 
-			if oboundp == nil && obound == nil && oboundFromIncoming == nil {
+			if oboundp == nil && obound == nil {
 				DEBUG.Println(NET, "outgoing comms stopping")
 				close(errChan)
 				return
@@ -409,23 +367,6 @@ func startOutgoingComms(conn net.Conn,
 					msg.t.(*DisconnectToken).flowComplete()
 					DEBUG.Println(NET, "outbound wrote disconnect, closing connection")
 					_ = conn.Close()
-				}
-			case msg, ok := <-oboundFromIncoming:
-				if !ok {
-					oboundFromIncoming = nil
-					continue
-				}
-				DEBUG.Println(NET, "obound from incoming msg to write, type", reflect.TypeOf(msg.p))
-				c.writeLock()
-				writeErr := msg.p.Write(conn)
-				c.writeUnlock()
-				if writeErr != nil {
-					ERROR.Println(NET, "outgoing oboundFromIncoming reporting error", writeErr)
-					if msg.t != nil {
-						msg.t.setError(writeErr)
-					}
-					errChan <- writeErr
-					continue
 				}
 			}
 			c.UpdateLastSent()

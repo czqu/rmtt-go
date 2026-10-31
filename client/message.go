@@ -15,7 +15,7 @@ func (m *message) Payload() []byte {
 	return m.payload
 }
 
-func messageFromPush(p *codec.PushPacket, ack func()) Message {
+func messageFromPush(p *codec.PushPacket) Message {
 	return &message{
 		payload: p.Payload,
 	}
