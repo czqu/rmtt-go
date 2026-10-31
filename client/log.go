@@ -1,5 +1,7 @@
 package client
 
+import "github.com/czqu/rmtt-go/internal/logx"
+
 // NET and CLI are the log prefixes used by the net and client subsystems.
 const (
 	NET string = "[net]     "
@@ -7,19 +9,13 @@ const (
 )
 
 type (
-	// Logger is the pluggable logging interface; it mirrors log.Logger's
-	// Println/Printf, so *log.Logger satisfies it directly.
-	Logger interface {
-		Println(v ...interface{})
-		Printf(format string, v ...interface{})
-	}
+	// Logger is the pluggable logging interface; it mirrors the standard
+	// library's log.Logger contract, so *log.Logger satisfies it directly.
+	Logger = logx.Logger
 
 	// NOOPLogger discards all log output; it is the default logger.
-	NOOPLogger struct{}
+	NOOPLogger = logx.NOOPLogger
 )
-
-func (NOOPLogger) Println(v ...interface{})               {}
-func (NOOPLogger) Printf(format string, v ...interface{}) {}
 
 // Package-level loggers, one per severity. All default to NOOPLogger; replace
 // them with SetLogger or the per-level setters.
@@ -32,9 +28,7 @@ var (
 
 // SetLogger sets a single Logger implementation for all levels (error/info/warn/debug).
 func SetLogger(logger Logger) {
-	if logger == nil {
-		logger = NOOPLogger{}
-	}
+	logger = logx.OrNOOP(logger)
 	ERROR = logger
 	INFO = logger
 	WARN = logger
@@ -43,32 +37,20 @@ func SetLogger(logger Logger) {
 
 // SetDebugLogger sets the Logger used for debug-level messages only.
 func SetDebugLogger(logger Logger) {
-	if logger == nil {
-		logger = NOOPLogger{}
-	}
-	DEBUG = logger
+	DEBUG = logx.OrNOOP(logger)
 }
 
 // SetInfoLogger sets the Logger used for info-level messages only.
 func SetInfoLogger(logger Logger) {
-	if logger == nil {
-		logger = NOOPLogger{}
-	}
-	INFO = logger
+	INFO = logx.OrNOOP(logger)
 }
 
 // SetWarnLogger sets the Logger used for warn-level messages only.
 func SetWarnLogger(logger Logger) {
-	if logger == nil {
-		logger = NOOPLogger{}
-	}
-	WARN = logger
+	WARN = logx.OrNOOP(logger)
 }
 
 // SetErrorLogger sets the Logger used for error-level messages only.
 func SetErrorLogger(logger Logger) {
-	if logger == nil {
-		logger = NOOPLogger{}
-	}
-	ERROR = logger
+	ERROR = logx.OrNOOP(logger)
 }
