@@ -8,21 +8,22 @@ import (
 	"net"
 	"net/url"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/czqu/rmtt-go/codec"
+	"github.com/czqu/rmtt-go/internal/transport"
 	"github.com/quic-go/quic-go"
 	"github.com/xtaci/kcp-go"
 	"golang.org/x/net/websocket"
 )
 
-const closedNetConnErrorText = "use of closed network connection"
-
-type quicConn struct {
-	*quic.Stream
-	session *quic.Conn
+// isClosedConnErr reports whether err stems from the library having closed
+// the connection itself, as opposed to a real I/O failure. net.ErrClosed
+// covers the stdlib transports and x/net/websocket (which passes through the
+// underlying conn error); io.ErrClosedPipe covers kcp-go.
+func isClosedConnErr(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
 }
 
 // quicConf returns the quic-go transport configuration. When override is nil
@@ -46,42 +47,6 @@ func quicConf(override *quic.Config) *quic.Config {
 		MaxIdleTimeout:  15 * time.Minute,
 		KeepAlivePeriod: 30 * time.Second,
 	}
-}
-
-func (qc *quicConn) LocalAddr() net.Addr {
-	return qc.session.LocalAddr()
-}
-
-func (qc *quicConn) RemoteAddr() net.Addr {
-	return qc.session.RemoteAddr()
-}
-
-func (qc *quicConn) SetDeadline(t time.Time) error {
-	return qc.Stream.SetDeadline(t)
-}
-
-func (qc *quicConn) SetReadDeadline(t time.Time) error {
-	return qc.Stream.SetReadDeadline(t)
-}
-
-func (qc *quicConn) SetWriteDeadline(t time.Time) error {
-	return qc.Stream.SetWriteDeadline(t)
-}
-
-func (qc *quicConn) Read(b []byte) (int, error) {
-	return qc.Stream.Read(b)
-}
-
-func (qc *quicConn) Write(b []byte) (int, error) {
-	return qc.Stream.Write(b)
-}
-
-func (qc *quicConn) Close() error {
-	err := qc.Stream.Close()
-	if err != nil {
-		return err
-	}
-	return qc.session.CloseWithError(0, "")
 }
 
 func openConnection(uri *url.URL, tlsc *tls.Config, dialer *net.Dialer, quicConfig *quic.Config) (net.Conn, error) {
@@ -126,18 +91,17 @@ func openConnection(uri *url.URL, tlsc *tls.Config, dialer *net.Dialer, quicConf
 			_ = session.CloseWithError(0, "")
 			return nil, err
 		}
-		return &quicConn{Stream: stream, session: session}, nil
+		// This client owns its QUIC session outright: closing the connection
+		// closes the session too, releasing the UDP socket.
+		return transport.NewQUICStreamConn(stream, session, func() error {
+			return session.CloseWithError(0, "")
+		}), nil
 	case "ws":
 		return dialWebSocket(uri.Host, uri.Path, "ws", nil)
 	case "wss":
 		return dialWebSocket(uri.Host, uri.Path, "wss", tlsc)
 	}
 	return nil, errors.New("unknown protocol")
-}
-
-type wsStreamConn struct {
-	ws  *websocket.Conn
-	buf []byte
 }
 
 func dialWebSocket(host, path, scheme string, tlsConfig *tls.Config) (net.Conn, error) {
@@ -159,51 +123,7 @@ func dialWebSocket(host, path, scheme string, tlsConfig *tls.Config) (net.Conn, 
 	if err != nil {
 		return nil, err
 	}
-	return &wsStreamConn{ws: ws}, nil
-}
-
-func (c *wsStreamConn) Read(p []byte) (int, error) {
-	for len(c.buf) == 0 {
-		var data []byte
-		if err := websocket.Message.Receive(c.ws, &data); err != nil {
-			return 0, err
-		}
-		c.buf = data
-	}
-	n := copy(p, c.buf)
-	c.buf = c.buf[n:]
-	return n, nil
-}
-
-func (c *wsStreamConn) Write(p []byte) (int, error) {
-	if err := websocket.Message.Send(c.ws, p); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
-
-func (c *wsStreamConn) Close() error {
-	return c.ws.Close()
-}
-
-func (c *wsStreamConn) LocalAddr() net.Addr {
-	return c.ws.LocalAddr()
-}
-
-func (c *wsStreamConn) RemoteAddr() net.Addr {
-	return c.ws.RemoteAddr()
-}
-
-func (c *wsStreamConn) SetDeadline(t time.Time) error {
-	return c.ws.SetDeadline(t)
-}
-
-func (c *wsStreamConn) SetReadDeadline(t time.Time) error {
-	return c.ws.SetReadDeadline(t)
-}
-
-func (c *wsStreamConn) SetWriteDeadline(t time.Time) error {
-	return c.ws.SetWriteDeadline(t)
+	return transport.NewWSConn(ws), nil
 }
 
 func connectServer(conn io.ReadWriter, cm *codec.ConnectPacket, protocolVersion uint) (byte, uint16, error) {
@@ -334,12 +254,12 @@ func startIncoming(conn io.ReadWriter) <-chan inbound {
 	go func() {
 		for {
 			if cp, err = codec.ReadPacket(conn); err != nil {
-				if strings.Contains(err.Error(), "unsupported packet type") {
+				if errors.Is(err, codec.ErrUnsupportedPacketType) {
 					dm := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
 					dm.SetReturnCode(codec.DiscProtocolViolation)
 					_ = dm.Write(conn)
 				}
-				if !strings.Contains(err.Error(), closedNetConnErrorText) {
+				if !isClosedConnErr(err) {
 					ibound <- inbound{err: err}
 				}
 				close(ibound)
@@ -453,7 +373,7 @@ func startOutgoingComms(conn net.Conn,
 				if writeErr != nil {
 					ERROR.Println(NET, "outgoing obound reporting error ", writeErr)
 					pub.t.setError(writeErr)
-					if !strings.Contains(writeErr.Error(), closedNetConnErrorText) {
+					if !isClosedConnErr(writeErr) {
 						errChan <- writeErr
 					}
 					continue

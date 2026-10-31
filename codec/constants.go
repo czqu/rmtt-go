@@ -1,5 +1,17 @@
 package codec
 
+// Protocol framing constants shared by all peers.
+const (
+	// MagicNumber is the fixed first field of every CONNECT packet.
+	MagicNumber uint32 = 0x637a7175
+	// ProtocolVersion is the protocol version spoken by this build.
+	ProtocolVersion byte = 1
+	// MaxPacketSize bounds a frame's RemainingLength. ReadPacket rejects
+	// larger claims before allocating, so an unauthenticated peer cannot make
+	// the process allocate unbounded memory from a few header bytes.
+	MaxPacketSize = 16 << 20 // 16 MiB
+)
+
 // Control packet types.
 const (
 	Connect    = 1

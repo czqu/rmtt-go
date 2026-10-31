@@ -1,5 +1,7 @@
 package server
 
+import "time"
+
 // ServerOptions holds the configuration for a Server. Create with
 // NewServerOptions and adjust with the Set* helpers or direct field
 // assignment.
@@ -9,16 +11,21 @@ type ServerOptions struct {
 	MessageHandler     MessageHandler
 	ConnectionListener ConnectionListener
 	KeepalivePolicy    *KeepalivePolicy
+	// HandshakeTimeout bounds how long an accepted connection may take to
+	// deliver and authenticate its CONNECT packet. Without it a peer can hold
+	// a connection open indefinitely without sending anything.
+	HandshakeTimeout time.Duration
 
 	listeners []Listener
 }
 
 // NewServerOptions returns ServerOptions with library defaults: TCP port
-// 18883 and DefaultKeepalivePolicy.
+// 18883, DefaultKeepalivePolicy and a 10s handshake timeout.
 func NewServerOptions() *ServerOptions {
 	return &ServerOptions{
-		Port:            18883,
-		KeepalivePolicy: DefaultKeepalivePolicy(),
+		Port:             18883,
+		KeepalivePolicy:  DefaultKeepalivePolicy(),
+		HandshakeTimeout: 10 * time.Second,
 	}
 }
 
@@ -58,5 +65,12 @@ func (o *ServerOptions) SetConnectionListener(listener ConnectionListener) *Serv
 // SetKeepalivePolicy replaces the keepalive negotiation policy.
 func (o *ServerOptions) SetKeepalivePolicy(policy *KeepalivePolicy) *ServerOptions {
 	o.KeepalivePolicy = policy
+	return o
+}
+
+// SetHandshakeTimeout sets the deadline for the CONNECT handshake on newly
+// accepted connections.
+func (o *ServerOptions) SetHandshakeTimeout(d time.Duration) *ServerOptions {
+	o.HandshakeTimeout = d
 	return o
 }
