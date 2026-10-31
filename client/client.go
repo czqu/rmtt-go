@@ -113,12 +113,10 @@ func (c *client) Connect() Token {
 			break
 		}
 
-		inboundFromStore := make(chan codec.ControlPacket)
-		if !c.startWorkers(conn, connectionUp, inboundFromStore) {
+		if !c.startWorkers(conn, connectionUp) {
 			WARN.Println(CLI, "Connect() called but connection established in another goroutine")
 		}
 
-		close(inboundFromStore)
 		t.returnCode = rc
 		t.flowComplete()
 		DEBUG.Println(CLI, "exit startClient")
@@ -126,7 +124,7 @@ func (c *client) Connect() Token {
 	return t
 }
 
-func (c *client) startWorkers(conn net.Conn, connectionUp connCompletedFn, inboundFromStore <-chan codec.ControlPacket) bool {
+func (c *client) startWorkers(conn net.Conn, connectionUp connCompletedFn) bool {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 	if c.conn != nil {
@@ -145,12 +143,21 @@ func (c *client) startWorkers(conn net.Conn, connectionUp connCompletedFn, inbou
 		c.workers.Add(1)
 		go keepalive(c, conn)
 	}
+	// The dispatch loop delivers incoming PUSH messages to the registered
+	// handlers and is tracked in workers so shutdown waits for it; in-flight
+	// handler goroutines stay fire-and-forget.
 	incomingPubChan := make(chan *codec.PushPacket)
 	c.workers.Add(1)
-	ackOut := c.payloadHandler.dispatch(incomingPubChan, c)
+	go func() {
+		defer c.workers.Done()
+		c.payloadHandler.dispatch(incomingPubChan, c)
+	}()
 	if err := connectionUp(true); err != nil {
 		ERROR.Println(err)
 	}
+	// The redirector multiplexes the client-lifetime outbound queues onto
+	// this connection's comms channels and closes them on stop, so senders
+	// wedged on c.obound/c.oboundP are released when the connection dies.
 	commsobound := make(chan *PacketAndToken)
 	commsoboundP := make(chan *PacketAndToken)
 	c.workers.Add(1)
@@ -162,29 +169,16 @@ func (c *client) startWorkers(conn net.Conn, connectionUp connCompletedFn, inbou
 				commsoboundP <- msg
 			case msg := <-c.obound:
 				commsobound <- msg
-			case msg, ok := <-ackOut:
-				if !ok {
-					ackOut = nil
-					c.workers.Done()
-					continue
-				}
-				commsoboundP <- msg
 			case <-c.stop:
-				if ackOut != nil {
-					for msg := range ackOut {
-						commsoboundP <- msg
-					}
-					c.workers.Done()
-				}
 				close(commsoboundP)
 				close(commsobound)
-				DEBUG.Println(CLI, "startCommsWorkers output redirector finished")
+				DEBUG.Println(CLI, "output redirector finished")
 				return
 			}
 		}
 	}()
 
-	commsIncomingPub, commsErrors := startComms(c.conn, c, inboundFromStore, commsoboundP, commsobound)
+	commsIncomingPub, commsErrors := startComms(c.conn, c, commsoboundP, commsobound)
 	c.commsStopped = make(chan struct{})
 	go func() {
 		for {
@@ -470,12 +464,10 @@ type MessageHandler func(Client, Message)
 type handler struct {
 	sync.RWMutex
 	handlers *list.List
-	messages chan *codec.PushPacket
 }
 
 func newHandler() *handler {
-	router := &handler{handlers: list.New(), messages: make(chan *codec.PushPacket)}
-	return router
+	return &handler{handlers: list.New()}
 }
 
 func (h *handler) AddLast(handler MessageHandler) {
@@ -484,58 +476,20 @@ func (h *handler) AddLast(handler MessageHandler) {
 	h.handlers.PushBack(handler)
 }
 
-func (h *handler) dispatch(messages <-chan *codec.PushPacket, client *client) <-chan *PacketAndToken {
-	var wg sync.WaitGroup
-	ackOutChan := make(chan *PacketAndToken)
-	var ackInChan chan *PacketAndToken
-	stopAckCopy := make(chan struct{})
-	ackCopyStopped := make(chan struct{})
-	goRoutinesDone := make(chan struct{})
-	ackInChan = make(chan *PacketAndToken)
-	go func() {
-		for {
-			select {
-			case a := <-ackInChan:
-				ackOutChan <- a
-			case <-stopAckCopy:
-				close(ackCopyStopped)
-				for {
-					select {
-					case <-ackInChan:
-						DEBUG.Println("Dispatch received acknowledgment after processing stopped (ACK dropped).")
-					case <-goRoutinesDone:
-						close(ackInChan)
-						DEBUG.Println("Dispatch order=false copy goroutine exiting.")
-						return
-					}
-				}
-			}
+// dispatch delivers each incoming PUSH message to the registered handlers,
+// each invocation in its own goroutine. It blocks until messages is closed;
+// handler goroutines still in flight are not waited for.
+func (h *handler) dispatch(messages <-chan *codec.PushPacket, client *client) {
+	for message := range messages {
+		h.RLock()
+		m := messageFromPush(message)
+		for e := h.handlers.Front(); e != nil; e = e.Next() {
+			hd := e.Value.(MessageHandler)
+			go hd(client, m)
 		}
-	}()
-	go func() {
-		for message := range messages {
-			h.RLock()
-			m := messageFromPush(message, ackFunc(ackInChan, message))
-			for e := h.handlers.Front(); e != nil; e = e.Next() {
-				hd := e.Value.(MessageHandler)
-				wg.Add(1)
-				go func() {
-					hd(client, m)
-					wg.Done()
-				}()
-			}
-			h.RUnlock()
-		}
-		close(stopAckCopy)
-		<-ackCopyStopped
-		close(ackOutChan)
-		go func() {
-			wg.Wait()
-			close(goRoutinesDone)
-		}()
-		DEBUG.Println("Dispatch exiting")
-	}()
-	return ackOutChan
+		h.RUnlock()
+	}
+	DEBUG.Println("Dispatch exiting")
 }
 
 func (c *client) UpdateLastReceived() {
@@ -646,9 +600,7 @@ func (c *client) reconnect(connectionUp connCompletedFn) {
 		}
 	}
 
-	inboundFromStore := make(chan codec.ControlPacket)
-	if !c.startWorkers(conn, connectionUp, inboundFromStore) {
+	if !c.startWorkers(conn, connectionUp) {
 		WARN.Println("Connect() called but connection established in another goroutine!")
 	}
-	close(inboundFromStore)
 }

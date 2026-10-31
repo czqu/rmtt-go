@@ -100,7 +100,7 @@ func TestHandlerDispatch(t *testing.T) {
 	})
 
 	messages := make(chan *codec.PushPacket)
-	_ = h.dispatch(messages, &client{})
+	go h.dispatch(messages, &client{})
 
 	messages <- &codec.PushPacket{Payload: []byte(expected)}
 	close(messages)
