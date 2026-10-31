@@ -38,6 +38,13 @@ func ReadPacket(r io.Reader) (ControlPacket, error) {
 		return nil, err
 	}
 
+	// Reject the claimed size before allocating: the peer controls this
+	// length and has not been authenticated yet. A length of 0 is legal
+	// (PINGREQ/PINGRESP carry no body).
+	if fh.RemainingLength < 0 || fh.RemainingLength > MaxPacketSize {
+		return nil, fmt.Errorf("%w: %d (max %d)", ErrPacketTooLarge, fh.RemainingLength, MaxPacketSize)
+	}
+
 	cp, err := NewControlPacketWithHeader(fh)
 	if err != nil {
 		return nil, err
@@ -95,60 +102,59 @@ func decodeLength(r io.Reader) (int, error) {
 	var rLength uint32
 	var multiplier uint32
 	b := make([]byte, 1)
-	for multiplier < 27 {
-		_, err := io.ReadFull(r, b)
-		if err != nil {
+	for {
+		if _, err := io.ReadFull(r, b); err != nil {
 			return 0, err
 		}
 
 		digit := b[0]
 		rLength |= uint32(digit&127) << multiplier
 		if (digit & 128) == 0 {
-			break
+			return int(rLength), nil
 		}
 		multiplier += 7
+		// At most four bytes may carry the length; a continuation bit past
+		// that is a malformed varint, not a silently truncated value.
+		if multiplier >= 28 {
+			return 0, ErrMalformedRemainingLength
+		}
 	}
-	return int(rLength), nil
+}
+
+// newPacket returns an empty packet carrying fh, or nil for unknown types.
+// It is the single type dispatch shared by the packet factories below.
+func newPacket(fh FixedHeader) ControlPacket {
+	switch fh.MessageType {
+	case Connect:
+		return &ConnectPacket{FixedHeader: fh}
+	case Connack:
+		return &ConnackPacket{FixedHeader: fh}
+	case Disconnect:
+		return &DisconnectPacket{FixedHeader: fh}
+	case Push:
+		return &PushPacket{FixedHeader: fh}
+	case Pingreq:
+		return &PingreqPacket{FixedHeader: fh}
+	case Pingresp:
+		return &PingrespPacket{FixedHeader: fh}
+	}
+	return nil
 }
 
 // NewControlPacket returns an empty packet of the given type, suitable for
 // encoding; unknown types yield nil.
 func NewControlPacket(packetType byte) ControlPacket {
-	switch packetType {
-	case Connect:
-		return &ConnectPacket{FixedHeader: FixedHeader{MessageType: Connect}}
-	case Connack:
-		return &ConnackPacket{FixedHeader: FixedHeader{MessageType: Connack}}
-	case Disconnect:
-		return &DisconnectPacket{FixedHeader: FixedHeader{MessageType: Disconnect}}
-	case Push:
-		return &PushPacket{FixedHeader: FixedHeader{MessageType: Push}}
-	case Pingreq:
-		return &PingreqPacket{FixedHeader: FixedHeader{MessageType: Pingreq}}
-	case Pingresp:
-		return &PingrespPacket{FixedHeader: FixedHeader{MessageType: Pingresp}}
-	}
-	return nil
+	return newPacket(FixedHeader{MessageType: packetType})
 }
 
 // NewControlPacketWithHeader returns an empty packet of the type carried by
-// fh; unknown types yield an error.
+// fh; unknown types yield an ErrUnsupportedPacketType error.
 func NewControlPacketWithHeader(fh FixedHeader) (ControlPacket, error) {
-	switch fh.MessageType {
-	case Connect:
-		return &ConnectPacket{FixedHeader: fh}, nil
-	case Connack:
-		return &ConnackPacket{FixedHeader: fh}, nil
-	case Disconnect:
-		return &DisconnectPacket{FixedHeader: fh}, nil
-	case Push:
-		return &PushPacket{FixedHeader: fh}, nil
-	case Pingreq:
-		return &PingreqPacket{FixedHeader: fh}, nil
-	case Pingresp:
-		return &PingrespPacket{FixedHeader: fh}, nil
+	cp := newPacket(fh)
+	if cp == nil {
+		return nil, fmt.Errorf("%w 0x%x", ErrUnsupportedPacketType, fh.MessageType)
 	}
-	return nil, fmt.Errorf("unsupported packet type 0x%x", fh.MessageType)
+	return cp, nil
 }
 
 func decodeByte(b io.Reader) (byte, error) {

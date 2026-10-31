@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/czqu/rmtt-go/codec"
+	"github.com/czqu/rmtt-go/internal/transport"
 	"github.com/quic-go/quic-go"
 )
 
@@ -55,9 +56,9 @@ func mustGenerateTLSConfig(t *testing.T) *tls.Config {
 }
 
 // acceptStreamSoon waits for the server-side session to accept one stream and
-// returns it as a quicStreamConn, failing the test after a timeout instead of
-// hanging the whole test binary.
-func acceptStreamSoon(t *testing.T, sess *quic.Conn) *quicStreamConn {
+// returns it as a transport.QUICStreamConn, failing the test after a timeout
+// instead of hanging the whole test binary.
+func acceptStreamSoon(t *testing.T, sess *quic.Conn) *transport.QUICStreamConn {
 	t.Helper()
 	type res struct {
 		st  *quic.Stream
@@ -73,7 +74,7 @@ func acceptStreamSoon(t *testing.T, sess *quic.Conn) *quicStreamConn {
 		if r.err != nil {
 			t.Fatalf("server AcceptStream: %v", r.err)
 		}
-		return &quicStreamConn{Stream: r.st, session: sess}
+		return transport.NewQUICStreamConn(r.st, sess, nil)
 	case <-time.After(3 * time.Second):
 		t.Fatal("server AcceptStream timed out")
 		return nil
@@ -83,8 +84,8 @@ func acceptStreamSoon(t *testing.T, sess *quic.Conn) *quicStreamConn {
 // TestQUICMultiStream_CloseDoesNotKillSession opens a QUIC session, starts two
 // independent rmtt device streams over it, and verifies that closing one
 // stream's net.Conn does NOT tear down the other — the regression fixed by
-// making quicStreamConn.Close only close its stream (the session is owned by
-// serveSession).
+// making transport.QUICStreamConn.Close only close its stream (the session is
+// owned by serveSession).
 func TestQUICMultiStream_CloseDoesNotKillSession(t *testing.T) {
 	tlsCfg := mustGenerateTLSConfig(t)
 
@@ -127,7 +128,7 @@ func TestQUICMultiStream_CloseDoesNotKillSession(t *testing.T) {
 	defer serverSess.CloseWithError(0, "")
 
 	// Open two client-side streams; the server accepts each as a
-	// quicStreamConn (one rmtt device connection per stream). A PINGREQ is
+	// transport.QUICStreamConn (one rmtt device connection per stream). A PINGREQ is
 	// written right after each OpenStreamSync so quic-go delivers the STREAM
 	// frame to the peer, making AcceptStream return; the server then drains
 	// that PINGREQ so the stream is left clean for the later assertion.

@@ -76,11 +76,11 @@ func (b *backoffController) getBackoffSleepTime(
 }
 
 func (b *backoffController) sleepWithBackoff(
-	situation string, initSleepPeriod time.Duration, maxSleepPeriod time.Duration, processTime time.Duration, skipFirst bool,
+	situation string, initSleepPeriod time.Duration, maxSleepPeriod time.Duration, processTime time.Duration, skipFirst bool, jitter float64,
 ) (time.Duration, bool) {
 	sleep, isFirst := b.getBackoffSleepTime(situation, initSleepPeriod, maxSleepPeriod, processTime, skipFirst)
 	if sleep != 0 {
-		time.Sleep(jitterDuration(sleep, 0.25))
+		time.Sleep(jitterDuration(sleep, jitter))
 	}
 	return sleep, isFirst
 }

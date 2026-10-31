@@ -24,24 +24,7 @@ func (l *tlsListener) Serve(ctx context.Context, handler func(net.Conn)) error {
 	}
 	ln := tls.NewListener(inner, l.config)
 	l.ln = ln
-
-	go func() {
-		<-ctx.Done()
-		_ = ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				return err
-			}
-		}
-		go handler(conn)
-	}
+	return serveAccepted(ctx, ln, handler)
 }
 
 func (l *tlsListener) Close() error {

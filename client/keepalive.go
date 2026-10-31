@@ -27,6 +27,8 @@ func (c *client) effectiveHeartbeat() int64 {
 	return c.options.Heartbeat
 }
 
+// keepalive drives the heartbeat for the connection: the adaptive prober when
+// enabled, the fixed cadence otherwise.
 func keepalive(c *client, conn io.Writer) {
 	defer c.workers.Done()
 	DEBUG.Println(CLI, "keepalive starting")
@@ -35,52 +37,7 @@ func keepalive(c *client, conn io.Writer) {
 		adaptiveKeepalive(c, conn)
 		return
 	}
-
-	heartbeat := c.effectiveHeartbeat()
-	if heartbeat <= 0 {
-		DEBUG.Println(CLI, "keepalive disabled (server_kp==0)")
-		return
-	}
-	INFO.Printf(CLI+"keepalive: heartbeat=%ds server_kp=%d",
-		heartbeat, c.serverKp.Load())
-
-	checkInterval := time.Duration(heartbeat) * time.Second / 4
-	if checkInterval < time.Second {
-		checkInterval = time.Second
-	}
-
-	intervalTicker := time.NewTicker(checkInterval)
-	defer intervalTicker.Stop()
-
-	for {
-		select {
-		case <-c.stop:
-			DEBUG.Println(CLI, "keepalive stopped")
-			return
-		case <-intervalTicker.C:
-			heartbeat = c.effectiveHeartbeat()
-			if heartbeat <= 0 {
-				continue
-			}
-			lastSent := c.lastSent.Load().(time.Time)
-			lastReceived := c.lastReceived.Load().(time.Time)
-
-			DEBUG.Println(CLI, "heartbeat check", time.Since(lastSent).Seconds())
-			if time.Since(lastSent) >= time.Duration(heartbeat*int64(time.Second)) {
-				ping := codec.NewControlPacket(codec.Pingreq).(*codec.PingreqPacket)
-				DEBUG.Println(CLI, "keepalive sending ping ", time.Now())
-				if err := writePingReq(c, conn, ping); err != nil {
-					ERROR.Println(err)
-				}
-				c.lastSent.Store(time.Now())
-			}
-			if time.Since(lastReceived) >= time.Duration(float64(heartbeat)*float64(time.Second)*1.5) {
-				WARN.Println(CLI, "receive time out")
-				c.internalConnLost(errReceiveTimeout)
-				return
-			}
-		}
-	}
+	fixedKeepalive(c, conn)
 }
 
 // adaptivePhase mirrors the Java AdaptiveHeartbeat state machine.
@@ -259,14 +216,17 @@ func adaptiveKeepalive(c *client, conn io.Writer) {
 	}
 }
 
-// fixedKeepalive sends PINGREQ on a fixed cadence derived from effectiveHeartbeat (used when
-// adaptive heartbeat has no headroom above the short period).
+// fixedKeepalive sends PINGREQ on a fixed cadence derived from
+// effectiveHeartbeat and reaps the connection when nothing is received for
+// 1.5x the interval.
 func fixedKeepalive(c *client, conn io.Writer) {
 	heartbeat := c.effectiveHeartbeat()
 	if heartbeat <= 0 {
 		DEBUG.Println(CLI, "keepalive disabled (server_kp==0)")
 		return
 	}
+	INFO.Printf(CLI+"keepalive: heartbeat=%ds server_kp=%d",
+		heartbeat, c.serverKp.Load())
 	checkInterval := time.Duration(heartbeat) * time.Second / 4
 	if checkInterval < time.Second {
 		checkInterval = time.Second

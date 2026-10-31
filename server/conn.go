@@ -32,6 +32,10 @@ type deviceConnection struct {
 	conn     net.Conn
 	deviceID string
 	active   atomic.Bool
+	// closeReason carries the text reported with the connection-closed event
+	// when the teardown was initiated outside the connection's own read loop
+	// (e.g. Kick).
+	closeReason atomic.Value // string
 }
 
 func newDeviceConnection(conn net.Conn, deviceID string) *deviceConnection {
@@ -76,6 +80,35 @@ func (dc *deviceConnection) SendDisconnect(reason byte) {
 	dp := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
 	dp.SetReturnCode(reason)
 	_ = dp.Write(dc.conn)
+}
+
+// writeControl writes a server-generated control packet (PINGRESP,
+// protocol-violation DISCONNECT) under the same bounded-write invariant as
+// Write and SendDisconnect: every write to the connection happens while
+// holding dc.mu and with a write deadline set, so a stalled client cannot pin
+// the connection.
+func (dc *deviceConnection) writeControl(cp codec.ControlPacket) error {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+	if !dc.active.Load() {
+		return net.ErrClosed
+	}
+	_ = dc.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	return cp.Write(dc.conn)
+}
+
+// setCloseReason records the reason reported with the connection-closed event
+// when teardown is initiated externally (Kick).
+func (dc *deviceConnection) setCloseReason(reason string) {
+	dc.closeReason.Store(reason)
+}
+
+// reason returns the recorded close reason, or a generic one.
+func (dc *deviceConnection) reason() string {
+	if v := dc.closeReason.Load(); v != nil {
+		return v.(string)
+	}
+	return "connection closed"
 }
 
 func (dc *deviceConnection) Close() {

@@ -102,7 +102,7 @@ func TestGetBackoffSleepTime_ResetAfterIdle(t *testing.T) {
 func TestSleepWithBackoff_SkipFirstDoesNotSleep(t *testing.T) {
 	b := newBackoffController()
 	start := time.Now()
-	sleep, _ := b.sleepWithBackoff("x", time.Second, 10*time.Second, time.Second, true)
+	sleep, _ := b.sleepWithBackoff("x", time.Second, 10*time.Second, time.Second, true, 0.25)
 	if sleep != 0 {
 		t.Errorf("sleep = %v, want 0", sleep)
 	}

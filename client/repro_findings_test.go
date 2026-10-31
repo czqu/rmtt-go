@@ -1,9 +1,10 @@
 package client
 
-// White-box repro tests confirming code-review findings. Each test logs
-// "REPRO CONFIRMED" when the buggy behaviour is observed. Run with:
+// White-box regression tests derived from the code review of this repository.
+// Each test originally reproduced a defect and now asserts the fixed
+// behaviour. Run with:
 //
-//	go test -v -run TestRepro ./client/
+//	go test -v -run 'TestC3_|TestW4_' ./client/
 
 import (
 	"errors"
@@ -13,11 +14,10 @@ import (
 	"github.com/czqu/rmtt-go/codec"
 )
 
-// TestRepro_C3_PushDuringReconnectSilentlyDropped shows that while the client
-// is in the reconnecting state (AutoReconnect enabled), Push completes the
-// token with Error()==nil although not a single byte is written — the payload
-// is silently dropped.
-func TestRepro_C3_PushDuringReconnectSilentlyDropped(t *testing.T) {
+// TestC3_PushDuringReconnectReturnsError asserts that Push while the client is
+// reconnecting completes the token with ErrReconnecting instead of silently
+// dropping the payload with Error()==nil.
+func TestC3_PushDuringReconnectReturnsError(t *testing.T) {
 	o := NewClientOptions()
 	o.AutoReconnect = true
 	c := NewClient(o).(*client)
@@ -27,22 +27,18 @@ func TestRepro_C3_PushDuringReconnectSilentlyDropped(t *testing.T) {
 
 	tok := c.Push([]byte("lost payload"))
 	completed := tok.WaitTimeout(500 * time.Millisecond)
-	err := tok.Error()
-
-	t.Logf("Push during reconnecting: token completed=%v, Error()=%v, IsConnected()=%v, c.conn=%v",
-		completed, err, c.IsConnected(), c.conn)
-
-	if completed && err == nil && c.conn == nil {
-		t.Logf("REPRO CONFIRMED: Push finished with Error()==nil while c.conn==nil — payload silently dropped, caller believes it was sent")
-	} else {
-		t.Logf("NOT REPRODUCED: completed=%v err=%v conn=%v", completed, err, c.conn)
+	if !completed {
+		t.Fatal("Push token did not complete")
+	}
+	if !errors.Is(tok.Error(), ErrReconnecting) {
+		t.Fatalf("Push error = %v, want ErrReconnecting (payload must not look sent)", tok.Error())
 	}
 }
 
-// TestRepro_W4_TokenErrorCallbackDeadlock shows that baseToken.setError runs
-// the user's error handler while holding the token mutex, so a handler that
-// reads token.Error() deadlocks (sync.RWMutex is not reentrant).
-func TestRepro_W4_TokenErrorCallbackDeadlock(t *testing.T) {
+// TestW4_TokenErrorCallbackReentrant asserts that an error handler may call
+// back into the token (e.g. Error()) without deadlocking — previously
+// setError ran the handler while holding the token mutex.
+func TestW4_TokenErrorCallbackReentrant(t *testing.T) {
 	tok := newToken(codec.Push)
 	tok.SetErrorHandler(func(error) {
 		// perfectly natural handler code: inspect the token's error
@@ -57,8 +53,10 @@ func TestRepro_W4_TokenErrorCallbackDeadlock(t *testing.T) {
 
 	select {
 	case <-done:
-		t.Logf("NOT REPRODUCED: setError returned, no deadlock")
 	case <-time.After(1 * time.Second):
-		t.Logf("REPRO CONFIRMED: setError deadlocked for 1s — error handler calling token.Error() blocks on the mutex held by setError (goroutine leaked holding the lock)")
+		t.Fatal("setError deadlocked: error handler calling token.Error() blocks on the mutex held by setError")
+	}
+	if tok.Error() == nil {
+		t.Error("Error() = nil, want the set error")
 	}
 }
