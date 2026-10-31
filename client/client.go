@@ -119,6 +119,7 @@ func (c *client) Connect() Token {
 		}
 
 		close(inboundFromStore)
+		t.returnCode = rc
 		t.flowComplete()
 		DEBUG.Println(CLI, "exit startClient")
 	}()
@@ -231,7 +232,7 @@ func (c *client) startWorkers(conn net.Conn, connectionUp connCompletedFn, inbou
 
 func newConnectMsgFromOptions(options *ClientOptions, broker *url.URL) *codec.ConnectPacket {
 	m := codec.NewControlPacket(codec.Connect).(*codec.ConnectPacket)
-	m.MagicNumber = 0x637a7175
+	m.MagicNumber = codec.MagicNumber
 	m.ProtocolVersion = byte(options.ProtocolVersion)
 	m.Credential = options.Credential
 	kp := options.Heartbeat
@@ -242,87 +243,90 @@ func newConnectMsgFromOptions(options *ClientOptions, broker *url.URL) *codec.Co
 	return m
 }
 
-// Errors surfaced by Connect when the server rejects the CONNECT request
-// (bad protocol version / not authorised) or a protocol violation is
-// detected during the handshake.
+// Errors surfaced by Connect when the server rejects the CONNECT request or a
+// protocol violation is detected during the handshake.
 var (
 	RefusedNotAuthorisedErr      = errors.New("The server has rejected our request. Please check your permissions")
 	RefusedBadProtocolVersionErr = errors.New("Server does not support protocol version")
-	ProtocolViolationErr         = errors.New("The server has rejected our request. Please check your permissions")
+	RefusedServerUnavailableErr  = errors.New("The server is currently unavailable")
+	ProtocolViolationErr         = errors.New("The server closed the connection due to a protocol violation")
 	ErrDisconnectReceived        = errors.New("disconnect received from server")
+	// ErrReconnecting is returned by Push while AutoReconnect is re-establishing
+	// the connection; the payload was NOT sent.
+	ErrReconnecting = errors.New("client is reconnecting, message was not sent")
 )
 
+// connError maps a non-accepted CONNACK return code to the sentinel error
+// surfaced to callers, so every refusal — including codes without a dedicated
+// sentinel — completes the Connect token with an error instead of looking
+// like a success.
+func connError(rc byte) error {
+	switch rc {
+	case codec.ErrRefusedBadProtocolVersion:
+		return RefusedBadProtocolVersionErr
+	case codec.ErrRefusedNotAuthorised:
+		return RefusedNotAuthorisedErr
+	case codec.ErrRefusedServerUnavailable:
+		return RefusedServerUnavailableErr
+	case codec.ErrProtocolViolation:
+		return ProtocolViolationErr
+	}
+	return fmt.Errorf("connection refused with return code 0x%02x", rc)
+}
+
 func (c *client) attemptConnection() (net.Conn, byte, error) {
-	protocolVersion := c.options.ProtocolVersion
 	var (
 		conn net.Conn
 		err  error
-		rc   byte
+		rc   byte = codec.ErrNetworkError
 	)
-	servers := c.options.Servers
-	var server *url.URL
-	for _, server = range servers {
+	for _, server := range c.options.Servers {
 		cm := newConnectMsgFromOptions(&c.options, server)
-		connDeadline := time.Now().Add(c.options.ConnectTimeout)
+		// The attempt handler may swap in a per-attempt tls.Config; its result
+		// must be used for THIS attempt (it used to run after dialing and its
+		// return value was discarded).
+		tlsCfg := c.options.TLSConfig
+		if c.options.OnConnectAttempt != nil {
+			tlsCfg = c.options.OnConnectAttempt(server, tlsCfg)
+		}
 		dialer := &net.Dialer{Timeout: c.options.ConnectTimeout}
 		DEBUG.Println(CLI, "Attempting connection to server", server)
-		tlsCfg := c.options.TLSConfig
 		conn, err = openConnection(server, tlsCfg, dialer, c.options.quicConfig)
-		if c.options.OnConnectAttempt != nil {
-			tlsCfg = c.options.OnConnectAttempt(server, c.options.TLSConfig)
-		}
 		if err != nil {
 			ERROR.Println(err.Error())
 			WARN.Println(CLI, "failed to connect to server, trying next, error:", err)
 			rc = codec.ErrNetworkError
+			conn = nil
 			continue
 		}
+		connDeadline := time.Now().Add(c.options.ConnectTimeout)
 		if err := conn.SetDeadline(connDeadline); err != nil {
 			ERROR.Println("set deadline for handshake ", err)
 		}
 		var serverKp uint16
-		rc, serverKp, err = connectServer(conn, cm, protocolVersion)
+		rc, serverKp, err = connectServer(conn, cm, c.options.ProtocolVersion)
 		if rc == codec.Accepted {
 			if err := conn.SetDeadline(time.Time{}); err != nil {
 				ERROR.Println("reset deadline following handshake ", err)
 			}
 			c.serverKp.Store(int64(serverKp))
-			c.options.ProtocolVersion = protocolVersion
 			INFO.Printf(CLI+"CONNACK accepted: server_kp=%d keepalive=%ds adaptive=%v",
 				serverKp, c.options.Heartbeat, c.options.AdaptiveHeartbeat)
-			break
+			return conn, rc, nil
 		}
-	}
-	if rc == codec.ErrNetworkError {
-		WARN.Println("Failed to connect to any server")
-		return conn, rc, err
-	}
-	if rc == codec.Accepted {
-		DEBUG.Println(CLI, "connected to server ", server)
-		return conn, rc, err
-	}
-	if rc == codec.ErrRefusedBadProtocolVersion {
-		ERROR.Println(CLI, "Server does not support protocol version")
-		// The connection has never been handed to startWorkers (c.conn is still
-		// nil), so c.Disconnect would be a no-op and leak the underlying conn.
-		// Close it directly.
+		// Rejected or failed handshake: close this connection before trying
+		// the next server so it cannot leak, and surface a sentinel error.
 		_ = conn.Close()
-		err = RefusedBadProtocolVersionErr
-		return conn, rc, err
+		conn = nil
+		if err == nil {
+			err = connError(rc)
+		}
+		ERROR.Println(CLI, "connect attempt failed with return code 0x%02x:", rc, err)
 	}
-	if rc == codec.ErrRefusedNotAuthorised {
-		ERROR.Println(CLI, "The server has rejected our request. Please check your permissions")
-		_ = conn.Close()
-		err = RefusedNotAuthorisedErr
-		return conn, rc, err
+	WARN.Println(CLI, "Failed to connect to any server")
+	if err == nil {
+		err = errors.New("no server to connect to")
 	}
-	if rc == codec.ErrProtocolViolation {
-		ERROR.Println(CLI, "Unsupported server protocol version ")
-		_ = conn.Close()
-		err = ProtocolViolationErr
-		return conn, rc, err
-	}
-
 	return conn, rc, err
 }
 
@@ -423,7 +427,9 @@ func (c *client) Push(payload interface{}) Token {
 		token.setError(ErrNotConnected)
 		return token
 	case c.status.ConnectionStatus() == reconnecting:
-		token.flowComplete()
+		// The connection is down and being re-established. Completing the
+		// token without an error would silently drop the payload.
+		token.setError(ErrReconnecting)
 		return token
 	}
 	pub := codec.NewControlPacket(codec.Push).(*codec.PushPacket)
@@ -615,7 +621,7 @@ func (c *client) reconnect(connectionUp connCompletedFn) {
 		conn      net.Conn
 	)
 
-	if slp, isContinual := c.backoff.sleepWithBackoff("connectionLost", initSleep, c.options.MaxReconnectInterval, 3*time.Second, true); isContinual {
+	if slp, isContinual := c.backoff.sleepWithBackoff("connectionLost", initSleep, c.options.MaxReconnectInterval, 3*time.Second, true, c.options.ReconnectJitter); isContinual {
 		DEBUG.Println(CLI, "Detect continual connection lost after reconnect, slept for", int(slp.Seconds()), "seconds")
 	}
 
@@ -628,7 +634,7 @@ func (c *client) reconnect(connectionUp connCompletedFn) {
 		if err == nil {
 			break
 		}
-		sleep, _ := c.backoff.sleepWithBackoff("attemptReconnection", initSleep, c.options.MaxReconnectInterval, c.options.ConnectTimeout, false)
+		sleep, _ := c.backoff.sleepWithBackoff("attemptReconnection", initSleep, c.options.MaxReconnectInterval, c.options.ConnectTimeout, false, c.options.ReconnectJitter)
 		DEBUG.Println(CLI, "Reconnect failed, slept for", int(sleep.Seconds()), "seconds:", err)
 
 		if c.status.ConnectionStatus() != reconnecting {

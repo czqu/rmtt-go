@@ -81,20 +81,28 @@ func (b *baseToken) flowComplete() {
 
 func (b *baseToken) setError(e error) {
 	b.m.Lock()
-	b.HandlerError(e)
 	b.err = e
-	b.flowComplete()
 	b.m.Unlock()
+	// Run the handler outside the lock: handlers may legitimately call back
+	// into the token (e.g. Error()), and sync.RWMutex is not reentrant.
+	b.HandlerError(e)
+	b.flowComplete()
 }
 
+// HandlerError invokes the registered error handler, if any.
 func (b *baseToken) HandlerError(e error) {
-	if b.errHandler != nil {
-		b.errHandler(e)
+	b.m.RLock()
+	h := b.errHandler
+	b.m.RUnlock()
+	if h != nil {
+		h(e)
 	}
 }
 
 func (b *baseToken) SetErrorHandler(f func(error)) {
+	b.m.Lock()
 	b.errHandler = f
+	b.m.Unlock()
 }
 
 // ConnectToken completes when the CONNECT handshake finishes; ReturnCode
@@ -137,7 +145,7 @@ func newToken(tType byte) tokenCompletor {
 
 // TimedOut is returned by WaitTokenTimeout when the token did not complete
 // within the given duration.
-var TimedOut = errors.New("context canceled")
+var TimedOut = errors.New("token wait timed out")
 
 // WaitTokenTimeout waits up to d for the token to complete and returns its
 // error, or TimedOut if it did not complete in time.
