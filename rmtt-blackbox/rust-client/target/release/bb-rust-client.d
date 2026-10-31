@@ -1,0 +1,1 @@
+/workspace/rmtt-blackbox/rust-client/target/release/bb-rust-client: /tmp/rmtt-rust/src/client.rs /tmp/rmtt-rust/src/codec.rs /tmp/rmtt-rust/src/error.rs /tmp/rmtt-rust/src/lib.rs /tmp/rmtt-rust/src/message.rs /tmp/rmtt-rust/src/options.rs /workspace/rmtt-blackbox/rust-client/src/main.rs
