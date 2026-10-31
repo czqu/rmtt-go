@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/czqu/rmtt-go/internal/transport"
 	"golang.org/x/net/websocket"
 )
 
@@ -41,7 +42,7 @@ func (l *wsListener) Serve(ctx context.Context, handler func(net.Conn)) error {
 			return nil
 		},
 		Handler: func(conn *websocket.Conn) {
-			handler(&wsConn{ws: conn})
+			handler(transport.NewWSConn(conn))
 		},
 	}
 

@@ -1,6 +1,6 @@
-// Package repro contains repro tests that confirm the code-review findings
-// against the current code. Each test logs "REPRO CONFIRMED" when the buggy
-// behaviour under review is observed. Run with:
+// Package repro holds regression tests derived from the code review of this
+// repository. Each test originally reproduced a defect and now asserts the
+// fixed behaviour. Run with:
 //
 //	go test -v ./repro/
 package repro
@@ -13,11 +13,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/url"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,8 +75,8 @@ func startRealServer(t *testing.T, opts *server.ServerOptions) (server.Server, s
 func sendConnect(t *testing.T, conn net.Conn, credential string) *codec.ConnackPacket {
 	t.Helper()
 	cm := codec.NewControlPacket(codec.Connect).(*codec.ConnectPacket)
-	cm.MagicNumber = 0x637a7175
-	cm.ProtocolVersion = 1
+	cm.MagicNumber = codec.MagicNumber
+	cm.ProtocolVersion = codec.ProtocolVersion
 	cm.Keepalive = 30
 	cm.Credential = credential
 	if err := cm.Write(conn); err != nil {
@@ -86,12 +89,13 @@ func sendConnect(t *testing.T, conn net.Conn, credential string) *codec.ConnackP
 	return cp.(*codec.ConnackPacket)
 }
 
-// ---------- C1: codec RemainingLength unbounded allocation ----------
+// ---------- C1: codec RemainingLength bounded ----------
 
-// TestRepro_C1_RemainingLengthAllocDOS shows that a 5-byte packet header makes
-// codec.ReadPacket allocate the claimed RemainingLength (here 128MiB) before a
-// single payload byte arrives, with no upper bound and before authentication.
-func TestRepro_C1_RemainingLengthAllocDOS(t *testing.T) {
+// TestC1_RemainingLengthCapped asserts that a header claiming a huge
+// RemainingLength is rejected before any allocation: a 5-byte packet must not
+// make ReadPacket allocate the claimed size (previously 128MiB from 5 bytes,
+// pre-authentication).
+func TestC1_RemainingLengthCapped(t *testing.T) {
 	// varint 80 80 80 40 decodes to 64<<21 = 134217728 (128MiB).
 	const claimed = 134217728
 	// type byte: Push (3<<4), flags 0; then the 4-byte varint above.
@@ -105,24 +109,29 @@ func TestRepro_C1_RemainingLengthAllocDOS(t *testing.T) {
 
 	runtime.ReadMemStats(&after)
 	delta := after.TotalAlloc - before.TotalAlloc
-	t.Logf("attacker sent %d bytes, ReadPacket err=%v, heap allocated for claimed length: %d bytes (%.1f MiB)",
-		len(pkt), err, delta, float64(delta)/(1<<20))
 
-	if delta >= claimed-1<<20 {
-		t.Logf("REPRO CONFIRMED: ReadPacket allocated ~claimed size (%d bytes) from a %d-byte header with no size cap (pre-auth DoS)",
-			claimed, len(pkt))
-	} else {
-		t.Logf("NOT REPRODUCED: allocation delta = %d", delta)
+	if !errors.Is(err, codec.ErrPacketTooLarge) {
+		t.Fatalf("ReadPacket() error = %v, want ErrPacketTooLarge", err)
+	}
+	if delta >= 1<<20 {
+		t.Fatalf("ReadPacket allocated %d bytes for a rejected %d-byte claim", delta, claimed)
+	}
+	t.Logf("rejected %d-byte claim with %d bytes allocated (err=%v)", claimed, delta, err)
+
+	// The varint itself must also reject a fifth length byte instead of
+	// silently truncating.
+	if _, err := codec.ReadPacket(bytes.NewReader([]byte{0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F})); !errors.Is(err, codec.ErrMalformedRemainingLength) {
+		t.Fatalf("5-byte varint error = %v, want ErrMalformedRemainingLength", err)
 	}
 }
 
-// ---------- C2: CONNACK refusal 0x02 treated as connection success ----------
+// ---------- C2: refused CONNACK must fail the connect ----------
 
-// TestRepro_C2_RefusedConnackTreatedAsSuccess shows that a server answering
-// CONNACK(0x02 = ErrRefusedServerUnavailable) yields a Connect token with
-// Error()==nil and IsConnected()==true, and the token even reports the
-// Accepted return code.
-func TestRepro_C2_RefusedConnackTreatedAsSuccess(t *testing.T) {
+// TestC2_RefusedConnackFailsConnect asserts that a server answering
+// CONNACK(0x02 = ErrRefusedServerUnavailable) fails the Connect token with
+// that code surfaced — previously the client reported connected, Error()==nil
+// and ReturnCode()==Accepted.
+func TestC2_RefusedConnackFailsConnect(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +152,7 @@ func TestRepro_C2_RefusedConnackTreatedAsSuccess(t *testing.T) {
 		ca.ReturnCode = codec.ErrRefusedServerUnavailable // 0x02: server said NO
 		ca.ServerKeepalive = 60
 		_ = ca.Write(conn)
-		srvConnCh <- conn // keep the socket open so no EOF races the assertions
+		srvConnCh <- conn // hold the socket so no EOF races the assertions
 	}()
 
 	opts := client.NewClientOptions()
@@ -159,23 +168,28 @@ func TestRepro_C2_RefusedConnackTreatedAsSuccess(t *testing.T) {
 	srvConn := <-srvConnCh
 	defer srvConn.Close()
 
-	t.Logf("Connect: WaitTimeout=%v, Error()=%v, IsConnected()=%v, ReturnCode()=0x%02x (server actually sent 0x%02x)",
-		done, tok.Error(), c.IsConnected(), tok.(*client.ConnectToken).ReturnCode(), codec.ErrRefusedServerUnavailable)
-
-	if done && tok.Error() == nil && c.IsConnected() {
-		t.Logf("REPRO CONFIRMED: server refused with CONNACK 0x02 but client reports connected, token Error()==nil, ReturnCode()=Accepted")
-	} else {
-		t.Logf("NOT REPRODUCED: done=%v err=%v connected=%v", done, tok.Error(), c.IsConnected())
+	if !done {
+		t.Fatal("Connect() token did not complete")
+	}
+	if !errors.Is(tok.Error(), client.RefusedServerUnavailableErr) {
+		t.Fatalf("Connect() error = %v, want RefusedServerUnavailableErr", tok.Error())
+	}
+	if c.IsConnected() {
+		t.Error("IsConnected() = true after server refusal, want false")
+	}
+	if rc := tok.(*client.ConnectToken).ReturnCode(); rc != codec.ErrRefusedServerUnavailable {
+		t.Errorf("ReturnCode() = 0x%02x, want 0x%02x", rc, codec.ErrRefusedServerUnavailable)
 	}
 }
 
-// ---------- W1: CONNECT handshake has no read deadline (slowloris) ----------
+// ---------- W1: idle handshake must be closed by deadline ----------
 
-// TestRepro_W1_HandshakeNoDeadline shows the server holds a connection that
-// never sends a byte: after 2.5s the client-side read returns a timeout (conn
-// still open) instead of EOF, proving no handshake deadline exists.
-func TestRepro_W1_HandshakeNoDeadline(t *testing.T) {
+// TestW1_HandshakeTimeoutClosesIdleConn asserts that a connection which sends
+// nothing is closed by the server within the handshake timeout — previously
+// the server held such connections forever (slowloris).
+func TestW1_HandshakeTimeoutClosesIdleConn(t *testing.T) {
 	opts := server.NewServerOptions()
+	opts.SetHandshakeTimeout(500 * time.Millisecond)
 	_, addr, stop := startRealServer(t, opts)
 	defer stop()
 
@@ -183,19 +197,14 @@ func TestRepro_W1_HandshakeNoDeadline(t *testing.T) {
 	defer conn.Close()
 	// send nothing at all
 
-	time.Sleep(2500 * time.Millisecond)
-
-	_ = conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, err := conn.Read(make([]byte, 1))
-	if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		t.Logf("read err=%v (connection still held open by server)", err)
-		t.Logf("REPRO CONFIRMED: zero-byte connection still accepted and pending after 2.5s — CONNECT parse has no deadline (slowloris holds goroutine+fd)")
-	} else {
-		t.Logf("NOT REPRODUCED: read err=%v", err)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("read err = %v, want EOF (server should close idle handshake after 500ms)", err)
 	}
 }
 
-// ---------- W2: Kick double-fires OnConnectionClosed ----------
+// ---------- W2: lifecycle events fire exactly once ----------
 
 type eventRecorder struct {
 	mu     sync.Mutex
@@ -220,9 +229,10 @@ func (r *eventRecorder) snapshot() []string {
 	return append([]string(nil), r.events...)
 }
 
-// TestRepro_W2_KickDoubleCloseEvent shows that server.Kick delivers TWO
-// OnConnectionClosed callbacks for the same device.
-func TestRepro_W2_KickDoubleCloseEvent(t *testing.T) {
+// TestW2_KickFiresSingleCloseEvent asserts that server.Kick delivers exactly
+// ONE OnConnectionClosed callback — previously it double-fired (once from
+// Kick, once from the read-loop teardown).
+func TestW2_KickFiresSingleCloseEvent(t *testing.T) {
 	rec := &eventRecorder{}
 	opts := server.NewServerOptions()
 	opts.SetConnectionListener(rec)
@@ -231,8 +241,7 @@ func TestRepro_W2_KickDoubleCloseEvent(t *testing.T) {
 
 	conn := dialRetry(t, addr)
 	defer conn.Close()
-	ca := sendConnect(t, conn, "dev")
-	if ca.ReturnCode != codec.Accepted {
+	if ca := sendConnect(t, conn, "dev"); ca.ReturnCode != codec.Accepted {
 		t.Fatalf("CONNACK = 0x%02x", ca.ReturnCode)
 	}
 
@@ -260,14 +269,17 @@ func TestRepro_W2_KickDoubleCloseEvent(t *testing.T) {
 			closed++
 		}
 	}
-	if closed >= 2 {
-		t.Logf("REPRO CONFIRMED: Kick produced %d OnConnectionClosed callbacks for one device (duplicated lifecycle event)", closed)
-	} else {
-		t.Logf("NOT REPRODUCED: closed events = %d", closed)
+	if closed != 1 {
+		t.Fatalf("Kick produced %d OnConnectionClosed callbacks, want exactly 1", closed)
+	}
+	for _, e := range ev {
+		if len(e) >= 6 && e[:6] == "closed" && !strings.Contains(e, "kicked") {
+			t.Errorf("closed event reason = %q, want kicked reason", e)
+		}
 	}
 }
 
-// ---------- W5: OnConnectAttempt's returned tls.Config is ignored ----------
+// ---------- W5: OnConnectAttempt's returned tls.Config is applied ----------
 
 func selfSignedCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
@@ -300,15 +312,14 @@ func selfSignedCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv, Leaf: leaf}, pool
 }
 
-// TestRepro_W5_OnConnectAttemptIgnored shows that the tls.Config returned by
-// the OnConnectAttempt handler is never used: the handler deliberately returns
-// a config with a wrong ServerName (handshake MUST fail if applied), yet the
-// connection succeeds.
-func TestRepro_W5_OnConnectAttemptIgnored(t *testing.T) {
+// TestW5_OnConnectAttemptConfigApplied asserts that the tls.Config returned by
+// the OnConnectAttempt handler is what the attempt actually uses — previously
+// the handler ran after dialing and its return value was discarded.
+func TestW5_OnConnectAttemptConfigApplied(t *testing.T) {
 	cert, pool := selfSignedCert(t)
 
-	opts := server.NewServerOptions()
 	addr := freeAddr(t)
+	opts := server.NewServerOptions()
 	opts.AddListener(server.NewTLSListener(addr, &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
@@ -320,37 +331,58 @@ func TestRepro_W5_OnConnectAttemptIgnored(t *testing.T) {
 		cancel()
 		_ = srv.Close()
 	}()
-
-	// wait for the TLS listener to be ready
 	if c := dialRetry(t, addr); c != nil {
 		c.Close()
 	}
 
-	handlerCalls := 0
-	copts := client.NewClientOptions()
-	copts.AddServer("tls://" + addr)
-	copts.SetCredential("dev")
-	copts.ConnectRetry = false
-	copts.AutoReconnect = false
-	copts.SetConnectTimeout(5 * time.Second)
-	copts.SetTlsConfig(&tls.Config{RootCAs: pool, ServerName: "localhost", MinVersion: tls.VersionTLS12})
-	copts.SetConnectionAttemptHandler(func(u *url.URL, cfg *tls.Config) *tls.Config {
-		handlerCalls++
-		// Deliberately broken config: wrong ServerName. Per the documented
-		// contract ("may return a modified tls.Config for that attempt") the
-		// handshake must fail with this config.
-		return &tls.Config{RootCAs: pool, ServerName: "wrong.invalid", MinVersion: tls.VersionTLS12}
-	})
-
-	c := client.NewClient(copts)
-	tok := c.Connect()
-	done := tok.WaitTimeout(8 * time.Second)
-
-	t.Logf("Connect: done=%v, Error()=%v, IsConnected()=%v, handlerCalls=%d", done, tok.Error(), c.IsConnected(), handlerCalls)
-	if done && tok.Error() == nil && handlerCalls > 0 {
-		t.Logf("REPRO CONFIRMED: handler returned a cert-mismatching tls.Config but connect succeeded — OnConnectAttempt's return value is ignored")
-	} else {
-		t.Logf("NOT REPRODUCED: done=%v err=%v handlerCalls=%d", done, tok.Error(), handlerCalls)
+	goodCfg := func() *tls.Config {
+		return &tls.Config{RootCAs: pool, ServerName: "localhost", MinVersion: tls.VersionTLS12}
 	}
-	c.Disconnect(100)
+	brokenCfg := func() *tls.Config {
+		// wrong ServerName: handshake MUST fail if this config is applied
+		return &tls.Config{RootCAs: pool, ServerName: "wrong.invalid", MinVersion: tls.VersionTLS12}
+	}
+
+	cases := []struct {
+		name      string
+		baseCfg   *tls.Config
+		handler   *tls.Config
+		wantError bool
+	}{
+		{"returned config is used (broken return must fail)", goodCfg(), brokenCfg(), true},
+		{"returned config overrides options (good return must succeed)", brokenCfg(), goodCfg(), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handlerCalls := 0
+			copts := client.NewClientOptions()
+			copts.AddServer("tls://" + addr)
+			copts.SetCredential("dev")
+			copts.ConnectRetry = false
+			copts.AutoReconnect = false
+			copts.SetConnectTimeout(5 * time.Second)
+			copts.SetTlsConfig(tc.baseCfg)
+			copts.SetConnectionAttemptHandler(func(u *url.URL, cfg *tls.Config) *tls.Config {
+				handlerCalls++
+				return tc.handler
+			})
+
+			c := client.NewClient(copts)
+			tok := c.Connect()
+			done := tok.WaitTimeout(8 * time.Second)
+			if !done {
+				t.Fatal("Connect() token did not complete")
+			}
+			if handlerCalls != 1 {
+				t.Errorf("handler calls = %d, want 1", handlerCalls)
+			}
+			if tc.wantError && tok.Error() == nil {
+				t.Error("Connect() succeeded although the handler returned a cert-mismatching config; its return value is not applied")
+			}
+			if !tc.wantError && tok.Error() != nil {
+				t.Errorf("Connect() error = %v, want success with the handler-returned config", tok.Error())
+			}
+			c.Disconnect(100)
+		})
+	}
 }

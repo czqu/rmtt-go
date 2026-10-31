@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/czqu/rmtt-go/internal/transport"
 	"github.com/quic-go/quic-go"
 )
 
@@ -90,12 +91,12 @@ func (l *quicListener) Serve(ctx context.Context, handler func(net.Conn)) error 
 	}
 }
 
-// serveSession accepts bidirectional streams from a QUIC connection; each stream
-// is treated as one rmtt device connection. The session is owned by this
-// goroutine: when AcceptStream stops (peer closed, listener shutdown, or
+// serveSession accepts bidirectional streams from a QUIC connection; each
+// stream is treated as one rmtt device connection. The session is owned by
+// this goroutine: when AcceptStream stops (peer closed, listener shutdown, or
 // context cancel) the session is closed once here so its UDP socket and
 // goroutines are released — individual stream conns only close their own
-// stream (see quicStreamConn.Close).
+// stream (closeHook is nil in transport.NewQUICStreamConn).
 func (l *quicListener) serveSession(ctx context.Context, session *quic.Conn, handler func(net.Conn)) {
 	defer func() {
 		_ = session.CloseWithError(0, "")
@@ -105,7 +106,7 @@ func (l *quicListener) serveSession(ctx context.Context, session *quic.Conn, han
 		if err != nil {
 			return
 		}
-		go handler(&quicStreamConn{Stream: stream, session: session})
+		go handler(transport.NewQUICStreamConn(stream, session, nil))
 	}
 }
 

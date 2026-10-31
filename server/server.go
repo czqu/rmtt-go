@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +42,9 @@ func NewServer(opts *ServerOptions) Server {
 	}
 	if opts.KeepalivePolicy == nil {
 		opts.KeepalivePolicy = DefaultKeepalivePolicy()
+	}
+	if opts.HandshakeTimeout <= 0 {
+		opts.HandshakeTimeout = 10 * time.Second
 	}
 	if opts.ConnectionListener == nil {
 		opts.ConnectionListener = noopConnectionListener{}
@@ -107,10 +108,18 @@ func (s *serverImpl) Kick(deviceID string, reason byte) error {
 	if !ok || !conn.IsActive() {
 		return fmt.Errorf("device %s not connected", deviceID)
 	}
+	reasonText := fmt.Sprintf("kicked with reason 0x%02x", reason)
+	// Record the reason on the connection so whichever teardown wins the
+	// store race (this Kick or the connection's own read-loop defer) reports
+	// it; the Remove gate below guarantees exactly one OnConnectionClosed.
+	if dc, ok := conn.(*deviceConnection); ok {
+		dc.setCloseReason(reasonText)
+	}
 	conn.SendDisconnect(reason)
 	conn.Close()
-	_ = s.store.Remove(deviceID, conn)
-	s.options.ConnectionListener.OnConnectionClosed(deviceID, fmt.Sprintf("kicked with reason 0x%02x", reason))
+	if s.store.Remove(deviceID, conn) {
+		s.options.ConnectionListener.OnConnectionClosed(deviceID, reasonText)
+	}
 	return nil
 }
 
@@ -145,6 +154,12 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 		s.connMu.Unlock()
 	}()
 
+	// Bound the CONNECT handshake: a peer that connects and sends nothing
+	// must not hold a goroutine and fd forever.
+	if s.options.HandshakeTimeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout))
+	}
+
 	cp, err := codec.ReadPacket(conn)
 	if err != nil {
 		conn.Close()
@@ -157,12 +172,12 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 		return
 	}
 
-	if connectPkt.MagicNumber != 0x637a7175 {
+	if connectPkt.MagicNumber != codec.MagicNumber {
 		conn.Close()
 		return
 	}
 
-	if connectPkt.ProtocolVersion != 1 {
+	if connectPkt.ProtocolVersion != codec.ProtocolVersion {
 		ca := codec.NewControlPacket(codec.Connack).(*codec.ConnackPacket)
 		ca.ReturnCode = codec.ErrRefusedBadProtocolVersion
 		ca.Write(conn)
@@ -203,13 +218,18 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 		return
 	}
 
+	// Handshake complete: hand deadline control to the keepalive policy.
+	_ = conn.SetDeadline(time.Time{})
+
 	dc := newDeviceConnection(conn, deviceID)
 	if prev := s.store.Register(deviceID, dc); prev != nil {
-		// Tear down the superseded connection asynchronously so a slow/stuck
-		// old client cannot delay the new connection that just won the
-		// takeover. SendDisconnect is bounded by writeTimeout; Close then
-		// unblocks the old connection's read loop. prev is already replaced
-		// in the store, so this goroutine owns its teardown.
+		// The superseded connection is already replaced in the store, so its
+		// teardown defer will not report the closed event — report it here,
+		// before the new connection's established event, so consumers observe
+		// a strict closed-then-established order per device. The teardown
+		// itself is asynchronous so a slow/stuck old client cannot delay the
+		// new connection that just won the takeover.
+		s.options.ConnectionListener.OnConnectionClosed(deviceID, "session taken over")
 		go func(prev DeviceConnection) {
 			prev.SendDisconnect(codec.DiscSessionTakenOver)
 			prev.Close()
@@ -226,8 +246,12 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64) {
 	defer func() {
 		dc.Close()
-		s.store.Remove(dc.DeviceID(), dc)
-		s.options.ConnectionListener.OnConnectionClosed(dc.DeviceID(), "connection closed")
+		// Single outlet for the connection-closed event: the Remove gate
+		// makes it fire exactly once even when an external actor (Kick) tears
+		// the connection down concurrently.
+		if s.store.Remove(dc.DeviceID(), dc) {
+			s.options.ConnectionListener.OnConnectionClosed(dc.DeviceID(), dc.reason())
+		}
 		INFO.Printf("device %s disconnected", dc.DeviceID())
 	}()
 
@@ -239,6 +263,7 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 		keepaliveTimer = time.AfterFunc(timeout, func() {
 			WARN.Printf("keepalive timeout reaping device %s (no packet for %v, serverKp=%ds)",
 				dc.DeviceID(), timeout, serverKp)
+			dc.setCloseReason("keepalive timeout")
 			dc.SendDisconnect(codec.DiscKeepaliveTimeout)
 			dc.Close()
 		})
@@ -249,13 +274,10 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 		cp, err := codec.ReadPacket(conn)
 		if err != nil {
 			// An unrecognised packet type is a protocol violation; reply DISCONNECT(0x04)
-			if strings.Contains(err.Error(), "unsupported packet type") {
+			if errors.Is(err, codec.ErrUnsupportedPacketType) {
 				dp := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
 				dp.SetReturnCode(codec.DiscProtocolViolation)
-				_ = dp.Write(conn)
-			}
-			if err == io.EOF || errors.Is(err, net.ErrClosed) || strings.Contains(err.Error(), "use of closed network connection") {
-				return
+				_ = dc.writeControl(dp)
 			}
 			return
 		}
@@ -273,13 +295,13 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 		case *codec.PingreqPacket:
 			DEBUG.Printf("PINGREQ from device=%s -> PINGRESP", dc.DeviceID())
 			pr := codec.NewControlPacket(codec.Pingresp).(*codec.PingrespPacket)
-			_ = pr.Write(conn)
+			_ = dc.writeControl(pr)
 		case *codec.DisconnectPacket:
 			return
 		default:
 			dp := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
 			dp.SetReturnCode(codec.DiscProtocolViolation)
-			_ = dp.Write(conn)
+			_ = dc.writeControl(dp)
 			return
 		}
 	}
