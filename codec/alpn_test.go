@@ -6,45 +6,52 @@ import (
 	"testing"
 )
 
-func TestWithALPN_AddsTokenWhenMissing(t *testing.T) {
-	in := &tls.Config{}
-	out := WithALPN(in)
+func TestWithDefaultALPN_AppliesDefaultWhenUnset(t *testing.T) {
+	in := &tls.Config{} // NextProtos unset (nil)
+	out := WithDefaultALPN(in)
 	if !reflect.DeepEqual(out.NextProtos, []string{ALPN}) {
-		t.Errorf("WithALPN(empty).NextProtos = %v, want [%s]", out.NextProtos, ALPN)
+		t.Errorf("WithDefaultALPN(unset).NextProtos = %v, want [%s]", out.NextProtos, ALPN)
 	}
 	// The input must never be mutated (it is shared across listeners/attempts).
 	if in.NextProtos != nil {
-		t.Errorf("WithALPN mutated its input: NextProtos = %v", in.NextProtos)
+		t.Errorf("WithDefaultALPN mutated its input: NextProtos = %v", in.NextProtos)
 	}
 }
 
-func TestWithALPN_PreservesExistingProtos(t *testing.T) {
-	in := &tls.Config{NextProtos: []string{"h3", "rmtt", "h2"}}
-	out := WithALPN(in)
-	want := []string{"h3", "rmtt", "h2"}
-	if !reflect.DeepEqual(out.NextProtos, want) {
-		t.Errorf("WithALPN(existing) NextProtos = %v, want %v (rmtt present, order kept)", out.NextProtos, want)
+func TestWithDefaultALPN_HonoursExplicitOverride(t *testing.T) {
+	in := &tls.Config{NextProtos: []string{"h3", "h2"}}
+	out := WithDefaultALPN(in)
+	// Explicit config is used verbatim: no default is injected.
+	if !reflect.DeepEqual(out.NextProtos, []string{"h3", "h2"}) {
+		t.Errorf("WithDefaultALPN(override).NextProtos = %v, want [h3 h2]", out.NextProtos)
 	}
 }
 
-func TestWithALPN_PrependsWhenOnlyOtherProtos(t *testing.T) {
+func TestWithDefaultALPN_HonoursExplicitRMTTList(t *testing.T) {
+	in := &tls.Config{NextProtos: []string{"rmtt", "h2"}}
+	out := WithDefaultALPN(in)
+	if !reflect.DeepEqual(out.NextProtos, []string{"rmtt", "h2"}) {
+		t.Errorf("WithDefaultALPN([rmtt h2]).NextProtos = %v, want order preserved", out.NextProtos)
+	}
+}
+
+func TestWithDefaultALPN_EmptySliceDisablesALPN(t *testing.T) {
+	in := &tls.Config{NextProtos: []string{}} // explicit empty = disable
+	out := WithDefaultALPN(in)
+	if out.NextProtos == nil || len(out.NextProtos) != 0 {
+		t.Errorf("WithDefaultALPN(empty).NextProtos = %#v, want empty non-nil slice (ALPN disabled)", out.NextProtos)
+	}
+}
+
+func TestWithDefaultALPN_Nil(t *testing.T) {
+	if got := WithDefaultALPN(nil); got != nil {
+		t.Errorf("WithDefaultALPN(nil) = %v, want nil", got)
+	}
+}
+
+func TestWithDefaultALPN_DoesNotAliasInputSlice(t *testing.T) {
 	in := &tls.Config{NextProtos: []string{"h2"}}
-	out := WithALPN(in)
-	want := []string{ALPN, "h2"}
-	if !reflect.DeepEqual(out.NextProtos, want) {
-		t.Errorf("WithALPN([h2]) NextProtos = %v, want %v", out.NextProtos, want)
-	}
-}
-
-func TestWithALPN_Nil(t *testing.T) {
-	if got := WithALPN(nil); got != nil {
-		t.Errorf("WithALPN(nil) = %v, want nil", got)
-	}
-}
-
-func TestWithALPN_DoesNotAliasInputSlice(t *testing.T) {
-	in := &tls.Config{NextProtos: []string{"h2"}}
-	out := WithALPN(in)
+	out := WithDefaultALPN(in)
 	out.NextProtos[0] = "mutated"
 	if in.NextProtos[0] != "h2" {
 		t.Errorf("mutating output changed input: %v", in.NextProtos)

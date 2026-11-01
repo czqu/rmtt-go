@@ -67,9 +67,8 @@ func dialQUICRetry(t *testing.T, addr string, cfg *tls.Config) *quic.Conn {
 // TestQUICListener_NegotiatesRMTTWithNettyClient is the regression test for the
 // Java (Netty) -> Go incompatibility: the Netty QUIC client forces the server to
 // negotiate ALPN "rmtt", but rmtt-go's QUIC listener left NextProtos empty, so
-// the handshake failed with CRYPTO_ERROR 0x178 (no_application_protocol). The
-// listener must now advertise codec.ALPN even when the caller's tls.Config
-// omits NextProtos.
+// the handshake failed with CRYPTO_ERROR 0x178 (no_application_protocol). With
+// NextProtos unset, the listener now advertises the default codec.ALPN.
 func TestQUICListener_NegotiatesRMTTWithNettyClient(t *testing.T) {
 	// The typical user-supplied config: a certificate but no NextProtos.
 	serverCfg := mustGenerateTLSConfigNoALPN(t)
@@ -96,46 +95,65 @@ func TestQUICListener_NegotiatesRMTTWithNettyClient(t *testing.T) {
 	}
 }
 
-// TestQUICListener_PreservesCallerALPN ensures an explicit NextProtos choice is
-// respected: the rmtt token is added without discarding what the caller set.
-func TestQUICListener_PreservesCallerALPN(t *testing.T) {
+// TestQUICListener_HonoursExplicitALPNOverride ensures an explicit NextProtos is
+// used verbatim (the rmtt default is NOT injected), so callers can select a
+// different token.
+func TestQUICListener_HonoursExplicitALPNOverride(t *testing.T) {
 	serverCfg := mustGenerateTLSConfigWithALPN(t, []string{"h2"})
 
 	ln := NewQUICListener(fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t)), serverCfg).(*quicListener)
 	serveQUICInBackground(t, ln, ln.addr)
 
-	dialCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{codec.ALPN}}
+	// A client offering the caller's chosen token "h2" must connect.
+	dialCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}
 	sess := dialQUICRetry(t, ln.addr, dialCfg)
 	defer sess.CloseWithError(0, "")
 
-	if got := sess.ConnectionState().TLS.NegotiatedProtocol; got != codec.ALPN {
-		t.Fatalf("NegotiatedProtocol = %q, want %q", got, codec.ALPN)
+	if got := sess.ConnectionState().TLS.NegotiatedProtocol; got != "h2" {
+		t.Fatalf("NegotiatedProtocol = %q, want %q", got, "h2")
 	}
 	if want := []string{"h2"}; len(serverCfg.NextProtos) != 1 || serverCfg.NextProtos[0] != want[0] {
 		t.Errorf("caller's NextProtos changed to %v, want %v", serverCfg.NextProtos, want)
 	}
 }
 
+// TestQUICListener_DisabledALPNAcceptsLegacyClient covers the "empty NextProtos"
+// override: ALPN is disabled so legacy peers that send none can still connect.
+func TestQUICListener_DisabledALPNAcceptsLegacyClient(t *testing.T) {
+	serverCfg := mustGenerateTLSConfigWithALPN(t, []string{}) // explicit empty = disable
+
+	ln := NewQUICListener(fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t)), serverCfg).(*quicListener)
+	serveQUICInBackground(t, ln, ln.addr)
+
+	// Legacy-style client: offers no ALPN at all.
+	dialCfg := &tls.Config{InsecureSkipVerify: true}
+	sess := dialQUICRetry(t, ln.addr, dialCfg)
+	defer sess.CloseWithError(0, "")
+
+	if got := sess.ConnectionState().TLS.NegotiatedProtocol; got != "" {
+		t.Fatalf("NegotiatedProtocol = %q, want empty (ALPN disabled)", got)
+	}
+}
+
 // TestQUIC_GoClientWithGoServer_OmittedALPN guards the symmetric regression:
-// once the server advertises "rmtt", a Go client that also omits NextProtos
-// must still connect because the client path offers codec.ALPN via WithALPN.
-// Without that, RFC 9001 ALPN negotiation would fail (server offers a protocol
-// the client never requested).
+// with both ends leaving NextProtos unset, both take the default "rmtt" and the
+// handshake succeeds (a naive Go client that offered nothing would be rejected
+// by the ALPN-requiring server; the client path supplies the default too).
 func TestQUIC_GoClientWithGoServer_OmittedALPN(t *testing.T) {
 	serverCfg := mustGenerateTLSConfigNoALPN(t)
 	ln := NewQUICListener(fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t)), serverCfg).(*quicListener)
 	serveQUICInBackground(t, ln, ln.addr)
 
 	// A Go-style client tls.Config with no NextProtos; the client transport
-	// layers codec.WithALPN on top before dialing.
+	// layers codec.WithDefaultALPN on top before dialing.
 	rawClientCfg := &tls.Config{InsecureSkipVerify: true}
-	sess := dialQUICRetry(t, ln.addr, codec.WithALPN(rawClientCfg))
+	sess := dialQUICRetry(t, ln.addr, codec.WithDefaultALPN(rawClientCfg))
 	defer sess.CloseWithError(0, "")
 
 	if got := sess.ConnectionState().TLS.NegotiatedProtocol; got != codec.ALPN {
 		t.Fatalf("NegotiatedProtocol = %q, want %q", got, codec.ALPN)
 	}
 	if rawClientCfg.NextProtos != nil {
-		t.Errorf("WithALPN mutated the client config: NextProtos = %v", rawClientCfg.NextProtos)
+		t.Errorf("WithDefaultALPN mutated the client config: NextProtos = %v", rawClientCfg.NextProtos)
 	}
 }

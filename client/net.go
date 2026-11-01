@@ -114,11 +114,13 @@ func openConnection(uri *url.URL, tlsc *tls.Config, dialer *net.Dialer, quicConf
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		qc := quicConf(quicConfig)
-		// Offer the rmtt ALPN token: QUIC requires ALPN (RFC 9001) and the
-		// Java/Netty reference server only accepts peers that negotiate
-		// "rmtt". WithALPN adds it when missing and never mutates the caller's
-		// config, which is shared across connection attempts.
-		session, err := quic.DialAddr(ctx, uri.Host, codec.WithALPN(tlsc), qc)
+		// Offer an ALPN token: QUIC requires ALPN (RFC 9001) and the Java/Netty
+		// reference server only accepts peers that negotiate "rmtt".
+		// WithDefaultALPN supplies the default when the caller left NextProtos
+		// unset, honours an explicit override (or an empty slice to disable ALPN
+		// for legacy servers), and never mutates the caller's config, which is
+		// shared across connection attempts.
+		session, err := quic.DialAddr(ctx, uri.Host, codec.WithDefaultALPN(tlsc), qc)
 		if err != nil {
 			return nil, err
 		}
