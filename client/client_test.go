@@ -2,6 +2,8 @@ package client
 
 import (
 	"errors"
+	"io"
+	"net"
 	"net/url"
 	"sync"
 	"testing"
@@ -117,5 +119,112 @@ func TestHandlerDispatch(t *testing.T) {
 			t.Fatalf("handlers not all invoked, count = %d", cnt)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestCloseConnect_AdminDisconnectReportsLoss asserts that a server-initiated
+// DISCONNECT 0x02 (session takeover) or 0x06 (kicked by admin) fires
+// OnConnectionLost with a reason-bearing error and does NOT auto-reconnect —
+// reconnecting would evict the connection that took over, or get kicked again.
+// These codes used to go through Disconnect(100), so OnConnectionLost never
+// fired (e2e blackbox F12).
+func TestCloseConnect_AdminDisconnectReportsLoss(t *testing.T) {
+	tests := []struct {
+		name    string
+		reason  byte
+		wantErr error
+	}{
+		{"session takeover", codec.DiscSessionTakenOver, ErrSessionTakenOver},
+		{"kicked by admin", codec.DiscKickedByAdmin, ErrKickedByAdmin},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("listen: %v", err)
+			}
+			defer ln.Close()
+
+			serverDone := make(chan error, 1)
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					serverDone <- err
+					return
+				}
+				defer conn.Close()
+				if _, err := codec.ReadPacket(conn); err != nil { // CONNECT
+					serverDone <- err
+					return
+				}
+				ca := codec.NewControlPacket(codec.Connack).(*codec.ConnackPacket)
+				ca.ReturnCode = codec.Accepted
+				ca.ServerKeepalive = 0
+				if err := ca.Write(conn); err != nil {
+					serverDone <- err
+					return
+				}
+				dp := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
+				dp.SetReturnCode(tt.reason)
+				if err := dp.Write(conn); err != nil {
+					serverDone <- err
+					return
+				}
+				// The client must close the conn cleanly (EOF, not RST).
+				_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+				_, err = conn.Read(make([]byte, 1))
+				serverDone <- err
+			}()
+
+			lost := make(chan error, 4)
+			o := NewClientOptions()
+			o.AddServer("tcp://" + ln.Addr().String())
+			o.SetCredential("dev-admin")
+			o.Heartbeat = 0 // no keepalive workers in this test
+			o.ConnectRetry = false
+			o.AutoReconnect = true // must still NOT reconnect after 0x02/0x06
+			o.SetReconnectBase(10 * time.Millisecond)
+			o.SetConnectTimeout(3 * time.Second)
+			o.OnConnectionLost = func(_ Client, err error) { lost <- err }
+
+			c := NewClient(o)
+			tok := c.Connect()
+			if !tok.WaitTimeout(3 * time.Second) {
+				t.Fatal("Connect() token did not complete")
+			}
+			if tok.Error() != nil {
+				t.Fatalf("Connect() error = %v", tok.Error())
+			}
+
+			select {
+			case err := <-lost:
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("OnConnectionLost error = %v, want %v", err, tt.wantErr)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("OnConnectionLost was not called for a session-terminating DISCONNECT")
+			}
+			if c.IsConnected() {
+				t.Error("IsConnected() = true after session-terminating DISCONNECT")
+			}
+
+			// No auto-reconnect: nobody may dial back in.
+			_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(400 * time.Millisecond))
+			if conn2, err := ln.Accept(); err == nil {
+				conn2.Close()
+				t.Fatal("client reconnected after a session-terminating DISCONNECT")
+			}
+
+			// Exactly one OnConnectionLost call.
+			select {
+			case err := <-lost:
+				t.Fatalf("OnConnectionLost fired a second time with %v", err)
+			default:
+			}
+
+			if err := <-serverDone; err != nil && !errors.Is(err, io.EOF) {
+				t.Errorf("final server read error = %v, want EOF (clean client close)", err)
+			}
+		})
 	}
 }

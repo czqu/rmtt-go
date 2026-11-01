@@ -245,6 +245,12 @@ var (
 	RefusedServerUnavailableErr  = errors.New("The server is currently unavailable")
 	ProtocolViolationErr         = errors.New("The server closed the connection due to a protocol violation")
 	ErrDisconnectReceived        = errors.New("disconnect received from server")
+	// ErrSessionTakenOver is reported to OnConnectionLost when a newer
+	// connection for the same device replaced this session (DISCONNECT 0x02).
+	ErrSessionTakenOver = errors.New("session taken over by a newer connection")
+	// ErrKickedByAdmin is reported to OnConnectionLost when an administrator
+	// ended the session (DISCONNECT 0x06).
+	ErrKickedByAdmin = errors.New("kicked by administrator")
 	// ErrReconnecting is returned by Push while AutoReconnect is re-establishing
 	// the connection; the payload was NOT sent.
 	ErrReconnecting = errors.New("client is reconnecting, message was not sent")
@@ -513,8 +519,15 @@ func (c *client) CloseConnect(reason byte) {
 	switch reason {
 	case codec.DiscNormalDisconnect:
 		c.Disconnect(100)
-	case codec.DiscSessionTakenOver, codec.DiscKickedByAdmin:
-		c.Disconnect(100)
+	case codec.DiscSessionTakenOver:
+		// The session now belongs to a newer connection: report the loss but
+		// never auto-reconnect — a reconnect would evict the connection that
+		// just took over and restart the takeover war.
+		c.connLost(ErrSessionTakenOver, false)
+	case codec.DiscKickedByAdmin:
+		// The session was ended deliberately: report the loss but never
+		// auto-reconnect — a reconnect would just be kicked again.
+		c.connLost(ErrKickedByAdmin, false)
 	default:
 		c.internalConnLost(ErrDisconnectReceived)
 	}
@@ -525,8 +538,17 @@ func (c *client) AddPayloadHandlerLast(handler MessageHandler) {
 }
 
 func (c *client) internalConnLost(whyConnLost error) {
-	DEBUG.Println(CLI, "internalConnLost called")
-	disDone, err := c.status.ConnectionLost(c.options.AutoReconnect && c.status.ConnectionStatus() > connecting)
+	c.connLost(whyConnLost, c.options.AutoReconnect)
+}
+
+// connLost tears the connection down and reports it via OnConnectionLost.
+// mayReconnect gates AutoReconnect and must be false for server-initiated
+// DISCONNECTs that forbid re-establishing the session (0x02 session takeover,
+// 0x06 kicked by admin); OnConnectionLost still fires so applications can
+// observe why the session ended.
+func (c *client) connLost(whyConnLost error, mayReconnect bool) {
+	DEBUG.Println(CLI, "connLost called")
+	disDone, err := c.status.ConnectionLost(mayReconnect && c.status.ConnectionStatus() > connecting)
 	if err != nil {
 		if err == errConnLossWhileDisconnecting || err == errAlreadyHandlingConnectionLoss {
 			return
