@@ -12,16 +12,23 @@ func TestWithDefaultALPN_AppliesDefaultWhenUnset(t *testing.T) {
 	if !reflect.DeepEqual(out.NextProtos, []string{ALPN}) {
 		t.Errorf("WithDefaultALPN(unset).NextProtos = %v, want [%s]", out.NextProtos, ALPN)
 	}
-	// The input must never be mutated (it is shared across listeners/attempts).
 	if in.NextProtos != nil {
 		t.Errorf("WithDefaultALPN mutated its input: NextProtos = %v", in.NextProtos)
+	}
+}
+
+func TestWithDefaultALPN_EmptySliceAlsoDefaults(t *testing.T) {
+	// Empty now means "use the default", never "disable" — that was the footgun.
+	in := &tls.Config{NextProtos: []string{}}
+	out := WithDefaultALPN(in)
+	if !reflect.DeepEqual(out.NextProtos, []string{ALPN}) {
+		t.Errorf("WithDefaultALPN(empty).NextProtos = %v, want [%s]", out.NextProtos, ALPN)
 	}
 }
 
 func TestWithDefaultALPN_HonoursExplicitOverride(t *testing.T) {
 	in := &tls.Config{NextProtos: []string{"h3", "h2"}}
 	out := WithDefaultALPN(in)
-	// Explicit config is used verbatim: no default is injected.
 	if !reflect.DeepEqual(out.NextProtos, []string{"h3", "h2"}) {
 		t.Errorf("WithDefaultALPN(override).NextProtos = %v, want [h3 h2]", out.NextProtos)
 	}
@@ -35,11 +42,14 @@ func TestWithDefaultALPN_HonoursExplicitRMTTList(t *testing.T) {
 	}
 }
 
-func TestWithDefaultALPN_EmptySliceDisablesALPN(t *testing.T) {
-	in := &tls.Config{NextProtos: []string{}} // explicit empty = disable
+func TestWithDefaultALPN_DisableSentinel(t *testing.T) {
+	in := &tls.Config{NextProtos: []string{DisableALPN}}
 	out := WithDefaultALPN(in)
 	if out.NextProtos == nil || len(out.NextProtos) != 0 {
-		t.Errorf("WithDefaultALPN(empty).NextProtos = %#v, want empty non-nil slice (ALPN disabled)", out.NextProtos)
+		t.Errorf("WithDefaultALPN(DisableALPN).NextProtos = %#v, want empty non-nil slice", out.NextProtos)
+	}
+	if in.NextProtos[0] != DisableALPN {
+		t.Errorf("WithDefaultALPN mutated its input: %v", in.NextProtos)
 	}
 }
 
