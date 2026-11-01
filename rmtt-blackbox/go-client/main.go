@@ -275,7 +275,7 @@ func main() {
 
 func push(c client.Client, payload []byte) {
 	t := c.Push(payload)
-	if !t.WaitTimeout(10*time.Second) {
+	if !t.WaitTimeout(10 * time.Second) {
 		fail("push timed out")
 	}
 	if t.Error() != nil {
