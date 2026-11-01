@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/czqu/rmtt-go/codec"
@@ -15,7 +16,25 @@ type quicListener struct {
 	addr     string
 	config   *tls.Config
 	quicConf *quic.Config
-	ln       *quic.Listener
+
+	// mu guards ln, which Serve writes once the socket is bound and Close (and
+	// callers polling readiness) read concurrently.
+	mu sync.Mutex
+	ln *quic.Listener
+}
+
+// setLn records the bound QUIC listener.
+func (l *quicListener) setLn(ln *quic.Listener) {
+	l.mu.Lock()
+	l.ln = ln
+	l.mu.Unlock()
+}
+
+// boundLn returns the bound QUIC listener, or nil if Serve has not bound yet.
+func (l *quicListener) boundLn() *quic.Listener {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.ln
 }
 
 // quicConf returns the shared quic-go transport configuration. The library's
@@ -79,7 +98,7 @@ func (l *quicListener) Serve(ctx context.Context, handler func(net.Conn)) error 
 	if err != nil {
 		return err
 	}
-	l.ln = ln
+	l.setLn(ln)
 
 	go func() {
 		<-ctx.Done()
@@ -120,8 +139,8 @@ func (l *quicListener) serveSession(ctx context.Context, session *quic.Conn, han
 }
 
 func (l *quicListener) Close() error {
-	if l.ln != nil {
-		return l.ln.Close()
+	if ln := l.boundLn(); ln != nil {
+		return ln.Close()
 	}
 	return nil
 }
