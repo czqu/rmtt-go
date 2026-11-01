@@ -1,0 +1,399 @@
+PASS   protocol   go           -/tcp          handshake.accepted       code=0 server_kp=30 want_kp=30
+PASS   protocol   go           -/tcp          handshake.kp_high        code=0 server_kp=600 want_kp=600
+PASS   protocol   go           -/tcp          handshake.kp_zero        code=0 server_kp=60 want_kp=60
+PASS   protocol   go           -/tcp          handshake.kp_passthrough proposal=315 server_kp=315 want_kp=315
+PASS   protocol   go           -/tcp          handshake.bad_magic      closed without CONNACK
+PASS   protocol   go           -/tcp          handshake.bad_version    connack=1
+PASS   protocol   go           -/tcp          handshake.auth_reject    connack=0x03
+PASS   protocol   go           -/tcp          handshake.credential_23  connack=0x00
+PASS   protocol   go           -/tcp          handshake.credential_24  connack=0x00 want=0x00
+PASS   protocol   go           -/tcp          control.ping             pingresp len=0
+PASS   protocol   go           -/tcp          push.echo_text           payload=b'echo:hello-wire'
+PASS   protocol   go           -/tcp          push.echo_empty          payload=b'echo:'
+PASS   protocol   go           -/tcp          push.echo_binary         len=261
+PASS   protocol   go           -/tcp          push.echo_8000           len=8005
+PASS   protocol   go           -/tcp          stream.fragmented_connect connack=0x00
+PASS   protocol   go           -/tcp          stream.coalesced_push    b'echo:co-2' b'echo:co-1'
+FAIL   protocol   go           -/tcp          stream.order_preserved   pipelined order b'echo:co-2' then b'echo:co-1'
+PASS   protocol   go           -/tcp          session.takeover         old=disconnect=0x02 new_ping=b''
+PASS   protocol   go           -/tcp          server.push_downlink     control='OK' payload=b'server-push'
+PASS   protocol   go           -/tcp          server.kick              control='OK' disconnect=0x06
+PASS   protocol   go           -/tcp          server.push_offline      control='ERR device ghost-device not connected'
+PASS   protocol   go           -/tcp          server.online_state      before='OK true' after='OK false'
+PASS   protocol   go           -/tcp          protocol.unknown_type_disconnect disconnect=0x04
+PASS   protocol   go           -/tcp          protocol.nonzero_flags   closed (ConnectionResetError)
+PASS   protocol   go           -/tcp          protocol.unknown_type    disconnect=0x04
+PASS   protocol   go           -/tcp          protocol.oversized_length closed (Closed)
+PASS   protocol   go           -/tcp          session.multi_device_isolation b'echo:from-a' b'echo:from-b'
+PASS   protocol   go           -/tcp          session.clean_disconnect 'OK true' -> 'OK false'
+PASS   protocol   go           -/tcp          session.20_concurrent_devices 20 devices
+PASS   protocol   go           -/tcp          keepalive.silent_reaped  connack=0x00 disconnect=0x05 after=1.50s
+PASS   protocol   go           -/tcp          keepalive.ping_keeps_alive survived 4s with server_kp=1
+PASS   protocol   go           -/tcp          server.shutdown_code     control='OK' disconnect=0x03
+PASS   protocol   go           -/tcp          keepalive.disable_negotiated connack=0x00 server_kp=0
+PASS   protocol   go           -/tcp          keepalive.disable_not_reaped b'echo:zero-1' b'echo:zero-2'
+PASS   protocol   java-netty   -/tcp          handshake.accepted       code=0 server_kp=30 want_kp=30
+PASS   protocol   java-netty   -/tcp          handshake.kp_high        code=0 server_kp=600 want_kp=600
+PASS   protocol   java-netty   -/tcp          handshake.kp_zero        code=0 server_kp=60 want_kp=60
+PASS   protocol   java-netty   -/tcp          handshake.kp_passthrough proposal=315 server_kp=315 want_kp=315
+PASS   protocol   java-netty   -/tcp          handshake.bad_magic      closed without CONNACK
+PASS   protocol   java-netty   -/tcp          handshake.bad_version    connack=1
+PASS   protocol   java-netty   -/tcp          handshake.auth_reject    connack=0x03
+PASS   protocol   java-netty   -/tcp          handshake.credential_23  connack=0x00
+PASS   protocol   java-netty   -/tcp          handshake.credential_24  connack=0x03 want=0x03
+PASS   protocol   java-netty   -/tcp          control.ping             pingresp len=0
+PASS   protocol   java-netty   -/tcp          push.echo_text           payload=b'echo:hello-wire'
+PASS   protocol   java-netty   -/tcp          push.echo_empty          payload=b'echo:'
+PASS   protocol   java-netty   -/tcp          push.echo_binary         len=261
+PASS   protocol   java-netty   -/tcp          push.echo_8000           len=8005
+PASS   protocol   java-netty   -/tcp          stream.fragmented_connect connack=0x00
+PASS   protocol   java-netty   -/tcp          stream.coalesced_push    b'echo:co-1' b'echo:co-2'
+PASS   protocol   java-netty   -/tcp          stream.order_preserved   pipelined order b'echo:co-1' then b'echo:co-2'
+PASS   protocol   java-netty   -/tcp          session.takeover         old=disconnect=0x02 new_ping=b''
+PASS   protocol   java-netty   -/tcp          server.push_downlink     control='OK' payload=b'server-push'
+PASS   protocol   java-netty   -/tcp          server.kick              control='OK' disconnect=0x06
+PASS   protocol   java-netty   -/tcp          server.push_offline      control='ERR DEVICE_OFFLINE'
+PASS   protocol   java-netty   -/tcp          server.online_state      before='OK true' after='OK false'
+PASS   protocol   java-netty   -/tcp          protocol.unknown_type_disconnect disconnect=0x04
+PASS   protocol   java-netty   -/tcp          protocol.nonzero_flags   disconnect=0x04
+PASS   protocol   java-netty   -/tcp          protocol.unknown_type    disconnect=0x04
+PASS   protocol   java-netty   -/tcp          protocol.oversized_length closed (Closed)
+PASS   protocol   java-netty   -/tcp          session.multi_device_isolation b'echo:from-a' b'echo:from-b'
+PASS   protocol   java-netty   -/tcp          session.clean_disconnect 'OK true' -> 'OK false'
+PASS   protocol   java-netty   -/tcp          session.20_concurrent_devices 20 devices
+PASS   protocol   java-netty   -/tcp          keepalive.silent_reaped  connack=0x00 disconnect=0x05 after=1.50s
+PASS   protocol   java-netty   -/tcp          keepalive.ping_keeps_alive survived 4s with server_kp=1
+FAIL   protocol   java-netty   -/tcp          server.shutdown_code     no DISCONNECT(0x03): Closed('peer closed')
+PASS   protocol   java-netty   -/tcp          keepalive.disable_negotiated connack=0x00 server_kp=0
+PASS   protocol   java-netty   -/tcp          keepalive.disable_not_reaped b'echo:zero-1' b'echo:zero-2'
+PASS   protocol   java-aio     -/tcp          handshake.accepted       code=0 server_kp=30 want_kp=30
+PASS   protocol   java-aio     -/tcp          handshake.kp_high        code=0 server_kp=600 want_kp=600
+PASS   protocol   java-aio     -/tcp          handshake.kp_zero        code=0 server_kp=60 want_kp=60
+PASS   protocol   java-aio     -/tcp          handshake.kp_passthrough proposal=315 server_kp=315 want_kp=315
+PASS   protocol   java-aio     -/tcp          handshake.bad_magic      closed without CONNACK
+PASS   protocol   java-aio     -/tcp          handshake.bad_version    connack=1
+PASS   protocol   java-aio     -/tcp          handshake.auth_reject    connack=0x03
+PASS   protocol   java-aio     -/tcp          handshake.credential_23  connack=0x00
+PASS   protocol   java-aio     -/tcp          handshake.credential_24  connack=0x03 want=0x03
+PASS   protocol   java-aio     -/tcp          control.ping             pingresp len=0
+PASS   protocol   java-aio     -/tcp          push.echo_text           payload=b'echo:hello-wire'
+PASS   protocol   java-aio     -/tcp          push.echo_empty          payload=b'echo:'
+PASS   protocol   java-aio     -/tcp          push.echo_binary         len=261
+PASS   protocol   java-aio     -/tcp          push.echo_8000           len=8005
+PASS   protocol   java-aio     -/tcp          stream.fragmented_connect connack=0x00
+PASS   protocol   java-aio     -/tcp          stream.coalesced_push    b'echo:co-1' b'echo:co-2'
+PASS   protocol   java-aio     -/tcp          stream.order_preserved   pipelined order b'echo:co-1' then b'echo:co-2'
+PASS   protocol   java-aio     -/tcp          session.takeover         old=disconnect=0x02 new_ping=b''
+PASS   protocol   java-aio     -/tcp          server.push_downlink     control='OK' payload=b'server-push'
+PASS   protocol   java-aio     -/tcp          server.kick              control='OK' disconnect=0x06
+PASS   protocol   java-aio     -/tcp          server.push_offline      control='ERR DEVICE_OFFLINE'
+PASS   protocol   java-aio     -/tcp          server.online_state      before='OK true' after='OK false'
+PASS   protocol   java-aio     -/tcp          protocol.unknown_type_disconnect disconnect=0x04
+PASS   protocol   java-aio     -/tcp          protocol.nonzero_flags   disconnect=0x04
+PASS   protocol   java-aio     -/tcp          protocol.unknown_type    disconnect=0x04
+PASS   protocol   java-aio     -/tcp          protocol.oversized_length disconnect=0x04
+PASS   protocol   java-aio     -/tcp          session.multi_device_isolation b'echo:from-a' b'echo:from-b'
+PASS   protocol   java-aio     -/tcp          session.clean_disconnect 'OK true' -> 'OK false'
+PASS   protocol   java-aio     -/tcp          session.20_concurrent_devices 20 devices
+PASS   protocol   java-aio     -/tcp          keepalive.silent_reaped  connack=0x00 disconnect=0x05 after=1.85s
+FAIL   protocol   java-aio     -/tcp          keepalive.ping_keeps_alive Timeout('recv timeout')
+FAIL   protocol   java-aio     -/tcp          server.shutdown_code     no DISCONNECT(0x03): Closed('peer closed')
+PASS   protocol   java-aio     -/tcp          keepalive.disable_negotiated connack=0x00 server_kp=0
+PASS   protocol   java-aio     -/tcp          keepalive.disable_not_reaped b'echo:zero-1' b'echo:zero-2'
+PASS   protocol   rust         -/tcp          handshake.accepted       code=0 server_kp=30 want_kp=30
+PASS   protocol   rust         -/tcp          handshake.kp_high        code=0 server_kp=600 want_kp=600
+PASS   protocol   rust         -/tcp          handshake.kp_zero        code=0 server_kp=60 want_kp=60
+PASS   protocol   rust         -/tcp          handshake.kp_passthrough proposal=315 server_kp=315 want_kp=315
+PASS   protocol   rust         -/tcp          handshake.bad_magic      closed without CONNACK
+PASS   protocol   rust         -/tcp          handshake.bad_version    connack=1
+PASS   protocol   rust         -/tcp          handshake.auth_reject    connack=0x03
+PASS   protocol   rust         -/tcp          handshake.credential_23  connack=0x00
+PASS   protocol   rust         -/tcp          handshake.credential_24  connack=0x00 want=0x00
+PASS   protocol   rust         -/tcp          control.ping             pingresp len=0
+PASS   protocol   rust         -/tcp          push.echo_text           payload=b'echo:hello-wire'
+PASS   protocol   rust         -/tcp          push.echo_empty          payload=b'echo:'
+PASS   protocol   rust         -/tcp          push.echo_binary         len=261
+PASS   protocol   rust         -/tcp          push.echo_8000           len=8005
+PASS   protocol   rust         -/tcp          stream.fragmented_connect connack=0x00
+PASS   protocol   rust         -/tcp          stream.coalesced_push    b'echo:co-1' b'echo:co-2'
+PASS   protocol   rust         -/tcp          stream.order_preserved   pipelined order b'echo:co-1' then b'echo:co-2'
+PASS   protocol   rust         -/tcp          session.takeover         old=disconnect=0x02 new_ping=b''
+PASS   protocol   rust         -/tcp          server.push_downlink     control='OK' payload=b'server-push'
+PASS   protocol   rust         -/tcp          server.kick              control='OK' disconnect=0x06
+PASS   protocol   rust         -/tcp          server.push_offline      control='ERR not connected'
+PASS   protocol   rust         -/tcp          server.online_state      before='OK true' after='OK false'
+PASS   protocol   rust         -/tcp          protocol.unknown_type_disconnect disconnect=0x04
+PASS   protocol   rust         -/tcp          protocol.nonzero_flags   disconnect=0x04
+PASS   protocol   rust         -/tcp          protocol.unknown_type    disconnect=0x04
+FAIL   protocol   rust         -/tcp          protocol.oversized_length no DISCONNECT/close within 5.0s (socket still open)
+PASS   protocol   rust         -/tcp          session.multi_device_isolation b'echo:from-a' b'echo:from-b'
+PASS   protocol   rust         -/tcp          session.clean_disconnect 'OK true' -> 'OK false'
+PASS   protocol   rust         -/tcp          session.20_concurrent_devices 20 devices
+PASS   protocol   rust         -/tcp          keepalive.silent_reaped  connack=0x00 disconnect=0x05 after=1.56s
+PASS   protocol   rust         -/tcp          keepalive.ping_keeps_alive survived 4s with server_kp=1
+PASS   protocol   rust         -/tcp          server.shutdown_code     control='OK' disconnect=0x03
+PASS   protocol   rust         -/tcp          keepalive.disable_negotiated connack=0x00 server_kp=0
+PASS   protocol   rust         -/tcp          keepalive.disable_not_reaped b'echo:zero-1' b'echo:zero-2'
+PASS   matrix     go           go/tcp         connect_echo             rc=0
+PASS   matrix     go           go/tcp         binary_256               rc=0
+PASS   matrix     go           go/tcp         medium_4000              rc=0
+PASS   matrix     go           go/tcp         concurrent_5             rc=0
+PASS   matrix     go           go/tcp         large_1MiB               rc=0
+PASS   matrix     go           go/tcp         auth_reject              rc=0
+PASS   matrix     go           go/tcp         downlink                 control='OK'
+PASS   matrix     go           go/tcp         kick                     control='OK'
+PASS   matrix     go           go/tcp         session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     go           go/tcp         keepalive_5s             rc=0
+PASS   matrix     go           go/tcp         auto_reconnect           rc=0
+PASS   matrix     go           java-netty/tcp connect_echo             rc=0
+PASS   matrix     go           java-netty/tcp binary_256               rc=0
+PASS   matrix     go           java-netty/tcp medium_4000              rc=0
+PASS   matrix     go           java-netty/tcp concurrent_5             rc=0
+FAIL   matrix     go           java-netty/tcp large_1MiB               rc=1
+PASS   matrix     go           java-netty/tcp auth_reject              rc=0
+PASS   matrix     go           java-netty/tcp downlink                 control='OK'
+PASS   matrix     go           java-netty/tcp kick                     control='OK'
+PASS   matrix     go           java-netty/tcp session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     go           java-netty/tcp keepalive_5s             rc=0
+PASS   matrix     go           java-netty/tcp auto_reconnect           rc=0
+PASS   matrix     go           java-aio/tcp   connect_echo             rc=0
+PASS   matrix     go           java-aio/tcp   binary_256               rc=0
+PASS   matrix     go           java-aio/tcp   medium_4000              rc=0
+PASS   matrix     go           java-aio/tcp   concurrent_5             rc=0
+FAIL   matrix     go           java-aio/tcp   large_1MiB               rc=1
+PASS   matrix     go           java-aio/tcp   auth_reject              rc=0
+PASS   matrix     go           java-aio/tcp   downlink                 control='OK'
+PASS   matrix     go           java-aio/tcp   kick                     control='OK'
+PASS   matrix     go           java-aio/tcp   session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     go           java-aio/tcp   keepalive_5s             rc=0
+PASS   matrix     go           java-aio/tcp   auto_reconnect           rc=0
+PASS   matrix     go           rust/tcp       connect_echo             rc=0
+PASS   matrix     go           rust/tcp       binary_256               rc=0
+PASS   matrix     go           rust/tcp       medium_4000              rc=0
+PASS   matrix     go           rust/tcp       concurrent_5             rc=0
+PASS   matrix     go           rust/tcp       large_1MiB               rc=0
+PASS   matrix     go           rust/tcp       auth_reject              rc=0
+PASS   matrix     go           rust/tcp       downlink                 control='OK'
+PASS   matrix     go           rust/tcp       kick                     control='OK'
+PASS   matrix     go           rust/tcp       session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     go           rust/tcp       keepalive_5s             rc=0
+PASS   matrix     go           rust/tcp       auto_reconnect           rc=0
+PASS   matrix     java-netty   go/tcp         connect_echo             rc=0
+PASS   matrix     java-netty   go/tcp         binary_256               rc=0
+PASS   matrix     java-netty   go/tcp         medium_4000              rc=0
+PASS   matrix     java-netty   go/tcp         concurrent_5             rc=0
+FAIL   matrix     java-netty   go/tcp         large_1MiB               rc=1
+PASS   matrix     java-netty   go/tcp         auth_reject              rc=0
+PASS   matrix     java-netty   go/tcp         downlink                 control='OK'
+PASS   matrix     java-netty   go/tcp         kick                     control='OK'
+PASS   matrix     java-netty   go/tcp         session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-netty   go/tcp         keepalive_5s             rc=0
+PASS   matrix     java-netty   go/tcp         auto_reconnect           rc=0
+PASS   matrix     java-netty   java-netty/tcp connect_echo             rc=0
+PASS   matrix     java-netty   java-netty/tcp binary_256               rc=0
+PASS   matrix     java-netty   java-netty/tcp medium_4000              rc=0
+PASS   matrix     java-netty   java-netty/tcp concurrent_5             rc=0
+FAIL   matrix     java-netty   java-netty/tcp large_1MiB               rc=1
+PASS   matrix     java-netty   java-netty/tcp auth_reject              rc=0
+PASS   matrix     java-netty   java-netty/tcp downlink                 control='OK'
+PASS   matrix     java-netty   java-netty/tcp kick                     control='OK'
+PASS   matrix     java-netty   java-netty/tcp session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-netty   java-netty/tcp keepalive_5s             rc=0
+PASS   matrix     java-netty   java-netty/tcp auto_reconnect           rc=0
+PASS   matrix     java-netty   java-aio/tcp   connect_echo             rc=0
+PASS   matrix     java-netty   java-aio/tcp   binary_256               rc=0
+PASS   matrix     java-netty   java-aio/tcp   medium_4000              rc=0
+PASS   matrix     java-netty   java-aio/tcp   concurrent_5             rc=0
+FAIL   matrix     java-netty   java-aio/tcp   large_1MiB               rc=1
+PASS   matrix     java-netty   java-aio/tcp   auth_reject              rc=0
+PASS   matrix     java-netty   java-aio/tcp   downlink                 control='OK'
+PASS   matrix     java-netty   java-aio/tcp   kick                     control='OK'
+PASS   matrix     java-netty   java-aio/tcp   session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-netty   java-aio/tcp   keepalive_5s             rc=0
+PASS   matrix     java-netty   java-aio/tcp   auto_reconnect           rc=0
+PASS   matrix     java-netty   rust/tcp       connect_echo             rc=0
+PASS   matrix     java-netty   rust/tcp       binary_256               rc=0
+PASS   matrix     java-netty   rust/tcp       medium_4000              rc=0
+PASS   matrix     java-netty   rust/tcp       concurrent_5             rc=0
+FAIL   matrix     java-netty   rust/tcp       large_1MiB               rc=1
+PASS   matrix     java-netty   rust/tcp       auth_reject              rc=0
+PASS   matrix     java-netty   rust/tcp       downlink                 control='OK'
+PASS   matrix     java-netty   rust/tcp       kick                     control='OK'
+PASS   matrix     java-netty   rust/tcp       session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-netty   rust/tcp       keepalive_5s             rc=0
+PASS   matrix     java-netty   rust/tcp       auto_reconnect           rc=0
+PASS   matrix     java-aio     go/tcp         connect_echo             rc=0
+PASS   matrix     java-aio     go/tcp         binary_256               rc=0
+PASS   matrix     java-aio     go/tcp         medium_4000              rc=0
+PASS   matrix     java-aio     go/tcp         concurrent_5             rc=0
+FAIL   matrix     java-aio     go/tcp         large_1MiB               rc=1
+PASS   matrix     java-aio     go/tcp         auth_reject              rc=0
+PASS   matrix     java-aio     go/tcp         downlink                 control='OK'
+PASS   matrix     java-aio     go/tcp         kick                     control='OK'
+PASS   matrix     java-aio     go/tcp         session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-aio     go/tcp         keepalive_5s             rc=0
+PASS   matrix     java-aio     go/tcp         auto_reconnect           rc=0
+PASS   matrix     java-aio     java-netty/tcp connect_echo             rc=0
+PASS   matrix     java-aio     java-netty/tcp binary_256               rc=0
+PASS   matrix     java-aio     java-netty/tcp medium_4000              rc=0
+PASS   matrix     java-aio     java-netty/tcp concurrent_5             rc=0
+FAIL   matrix     java-aio     java-netty/tcp large_1MiB               rc=1
+PASS   matrix     java-aio     java-netty/tcp auth_reject              rc=0
+PASS   matrix     java-aio     java-netty/tcp downlink                 control='OK'
+PASS   matrix     java-aio     java-netty/tcp kick                     control='OK'
+PASS   matrix     java-aio     java-netty/tcp session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-aio     java-netty/tcp keepalive_5s             rc=0
+PASS   matrix     java-aio     java-netty/tcp auto_reconnect           rc=0
+PASS   matrix     java-aio     java-aio/tcp   connect_echo             rc=0
+PASS   matrix     java-aio     java-aio/tcp   binary_256               rc=0
+PASS   matrix     java-aio     java-aio/tcp   medium_4000              rc=0
+PASS   matrix     java-aio     java-aio/tcp   concurrent_5             rc=0
+FAIL   matrix     java-aio     java-aio/tcp   large_1MiB               rc=1
+PASS   matrix     java-aio     java-aio/tcp   auth_reject              rc=0
+PASS   matrix     java-aio     java-aio/tcp   downlink                 control='OK'
+PASS   matrix     java-aio     java-aio/tcp   kick                     control='OK'
+PASS   matrix     java-aio     java-aio/tcp   session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-aio     java-aio/tcp   keepalive_5s             rc=0
+PASS   matrix     java-aio     java-aio/tcp   auto_reconnect           rc=0
+PASS   matrix     java-aio     rust/tcp       connect_echo             rc=0
+PASS   matrix     java-aio     rust/tcp       binary_256               rc=0
+PASS   matrix     java-aio     rust/tcp       medium_4000              rc=0
+PASS   matrix     java-aio     rust/tcp       concurrent_5             rc=0
+FAIL   matrix     java-aio     rust/tcp       large_1MiB               rc=1
+PASS   matrix     java-aio     rust/tcp       auth_reject              rc=0
+PASS   matrix     java-aio     rust/tcp       downlink                 control='OK'
+PASS   matrix     java-aio     rust/tcp       kick                     control='OK'
+PASS   matrix     java-aio     rust/tcp       session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     java-aio     rust/tcp       keepalive_5s             rc=0
+PASS   matrix     java-aio     rust/tcp       auto_reconnect           rc=0
+PASS   matrix     rust         go/tcp         connect_echo             rc=0
+PASS   matrix     rust         go/tcp         binary_256               rc=0
+PASS   matrix     rust         go/tcp         medium_4000              rc=0
+PASS   matrix     rust         go/tcp         concurrent_5             rc=0
+PASS   matrix     rust         go/tcp         large_1MiB               rc=0
+PASS   matrix     rust         go/tcp         auth_reject              rc=0
+PASS   matrix     rust         go/tcp         downlink                 control='OK'
+PASS   matrix     rust         go/tcp         kick                     control='OK'
+PASS   matrix     rust         go/tcp         session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     rust         go/tcp         keepalive_5s             rc=0
+PASS   matrix     rust         go/tcp         auto_reconnect           rc=0
+PASS   matrix     rust         java-netty/tcp connect_echo             rc=0
+PASS   matrix     rust         java-netty/tcp binary_256               rc=0
+PASS   matrix     rust         java-netty/tcp medium_4000              rc=0
+PASS   matrix     rust         java-netty/tcp concurrent_5             rc=0
+FAIL   matrix     rust         java-netty/tcp large_1MiB               rc=1
+PASS   matrix     rust         java-netty/tcp auth_reject              rc=0
+PASS   matrix     rust         java-netty/tcp downlink                 control='OK'
+PASS   matrix     rust         java-netty/tcp kick                     control='OK'
+PASS   matrix     rust         java-netty/tcp session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     rust         java-netty/tcp keepalive_5s             rc=0
+PASS   matrix     rust         java-netty/tcp auto_reconnect           rc=0
+PASS   matrix     rust         java-aio/tcp   connect_echo             rc=0
+PASS   matrix     rust         java-aio/tcp   binary_256               rc=0
+PASS   matrix     rust         java-aio/tcp   medium_4000              rc=0
+PASS   matrix     rust         java-aio/tcp   concurrent_5             rc=0
+FAIL   matrix     rust         java-aio/tcp   large_1MiB               rc=1
+PASS   matrix     rust         java-aio/tcp   auth_reject              rc=0
+PASS   matrix     rust         java-aio/tcp   downlink                 control='OK'
+PASS   matrix     rust         java-aio/tcp   kick                     control='OK'
+PASS   matrix     rust         java-aio/tcp   session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     rust         java-aio/tcp   keepalive_5s             rc=0
+PASS   matrix     rust         java-aio/tcp   auto_reconnect           rc=0
+PASS   matrix     rust         rust/tcp       connect_echo             rc=0
+PASS   matrix     rust         rust/tcp       binary_256               rc=0
+PASS   matrix     rust         rust/tcp       medium_4000              rc=0
+PASS   matrix     rust         rust/tcp       concurrent_5             rc=0
+PASS   matrix     rust         rust/tcp       large_1MiB               rc=0
+PASS   matrix     rust         rust/tcp       auth_reject              rc=0
+PASS   matrix     rust         rust/tcp       downlink                 control='OK'
+PASS   matrix     rust         rust/tcp       kick                     control='OK'
+PASS   matrix     rust         rust/tcp       session_takeover         victim_rc=0 attacker_rc=0
+PASS   matrix     rust         rust/tcp       keepalive_5s             rc=0
+PASS   matrix     rust         rust/tcp       auto_reconnect           rc=0
+PASS   transport  go           go/tls         connect_echo             rc=0
+PASS   transport  go           go/tls         medium_4000              rc=0
+PASS   transport  go           go/tls         downlink                 control='OK'
+PASS   transport  go           go/ws          connect_echo             rc=0
+PASS   transport  go           go/ws          medium_4000              rc=0
+PASS   transport  go           go/ws          downlink                 control='OK'
+PASS   transport  go           go/wss         connect_echo             rc=0
+PASS   transport  go           go/wss         medium_4000              rc=0
+PASS   transport  go           go/wss         downlink                 control='OK'
+PASS   transport  go           go/kcp         connect_echo             rc=0
+PASS   transport  go           go/kcp         medium_4000              rc=0
+PASS   transport  go           go/kcp         downlink                 control='OK'
+PASS   transport  go           go/quic        connect_echo             rc=0
+PASS   transport  go           go/quic        medium_4000              rc=0
+PASS   transport  go           go/quic        downlink                 control='OK'
+PASS   transport  go           java-netty/ws  connect_echo             rc=0
+PASS   transport  go           java-netty/ws  medium_4000              rc=0
+PASS   transport  go           java-netty/ws  downlink                 control='OK'
+PASS   transport  go           java-netty/wss connect_echo             rc=0
+PASS   transport  go           java-netty/wss medium_4000              rc=0
+PASS   transport  go           java-netty/wss downlink                 control='OK'
+PASS   transport  go           java-netty/kcp connect_echo             rc=0
+PASS   transport  go           java-netty/kcp medium_4000              rc=0
+PASS   transport  go           java-netty/kcp downlink                 control='OK'
+PASS   transport  go           java-aio/tls   connect_echo             rc=0
+PASS   transport  go           java-aio/tls   medium_4000              rc=0
+PASS   transport  go           java-aio/tls   downlink                 control='OK'
+PASS   transport  go           java-aio/ws    connect_echo             rc=0
+PASS   transport  go           java-aio/ws    medium_4000              rc=0
+PASS   transport  go           java-aio/ws    downlink                 control='OK'
+PASS   transport  go           java-aio/wss   connect_echo             rc=0
+PASS   transport  go           java-aio/wss   medium_4000              rc=0
+PASS   transport  go           java-aio/wss   downlink                 control='OK'
+PASS   transport  go           rust/tls       connect_echo             rc=0
+PASS   transport  go           rust/tls       medium_4000              rc=0
+PASS   transport  go           rust/tls       downlink                 control='OK'
+PASS   transport  java-netty   go/ws          connect_echo             rc=0
+PASS   transport  java-netty   go/ws          medium_4000              rc=0
+PASS   transport  java-netty   go/ws          downlink                 control='OK'
+PASS   transport  java-netty   go/wss         connect_echo             rc=0
+PASS   transport  java-netty   go/wss         medium_4000              rc=0
+PASS   transport  java-netty   go/wss         downlink                 control='OK'
+PASS   transport  java-netty   go/kcp         connect_echo             rc=0
+PASS   transport  java-netty   go/kcp         medium_4000              rc=0
+PASS   transport  java-netty   go/kcp         downlink                 control='OK'
+PASS   transport  java-netty   java-netty/ws  connect_echo             rc=0
+PASS   transport  java-netty   java-netty/ws  medium_4000              rc=0
+PASS   transport  java-netty   java-netty/ws  downlink                 control='OK'
+PASS   transport  java-netty   java-netty/wss connect_echo             rc=0
+PASS   transport  java-netty   java-netty/wss medium_4000              rc=0
+PASS   transport  java-netty   java-netty/wss downlink                 control='OK'
+PASS   transport  java-netty   java-netty/kcp connect_echo             rc=0
+PASS   transport  java-netty   java-netty/kcp medium_4000              rc=0
+PASS   transport  java-netty   java-netty/kcp downlink                 control='OK'
+PASS   transport  java-netty   java-aio/ws    connect_echo             rc=0
+PASS   transport  java-netty   java-aio/ws    medium_4000              rc=0
+PASS   transport  java-netty   java-aio/ws    downlink                 control='OK'
+PASS   transport  java-netty   java-aio/wss   connect_echo             rc=0
+PASS   transport  java-netty   java-aio/wss   medium_4000              rc=0
+PASS   transport  java-netty   java-aio/wss   downlink                 control='OK'
+PASS   transport  java-aio     go/tls         connect_echo             rc=0
+PASS   transport  java-aio     go/tls         medium_4000              rc=0
+PASS   transport  java-aio     go/tls         downlink                 control='OK'
+PASS   transport  java-aio     go/ws          connect_echo             rc=0
+PASS   transport  java-aio     go/ws          medium_4000              rc=0
+PASS   transport  java-aio     go/ws          downlink                 control='OK'
+PASS   transport  java-aio     go/wss         connect_echo             rc=0
+PASS   transport  java-aio     go/wss         medium_4000              rc=0
+PASS   transport  java-aio     go/wss         downlink                 control='OK'
+PASS   transport  java-aio     java-netty/ws  connect_echo             rc=0
+PASS   transport  java-aio     java-netty/ws  medium_4000              rc=0
+PASS   transport  java-aio     java-netty/ws  downlink                 control='OK'
+PASS   transport  java-aio     java-netty/wss connect_echo             rc=0
+PASS   transport  java-aio     java-netty/wss medium_4000              rc=0
+PASS   transport  java-aio     java-netty/wss downlink                 control='OK'
+PASS   transport  java-aio     java-aio/tls   connect_echo             rc=0
+PASS   transport  java-aio     java-aio/tls   medium_4000              rc=0
+PASS   transport  java-aio     java-aio/tls   downlink                 control='OK'
+PASS   transport  java-aio     java-aio/ws    connect_echo             rc=0
+PASS   transport  java-aio     java-aio/ws    medium_4000              rc=0
+PASS   transport  java-aio     java-aio/ws    downlink                 control='OK'
+PASS   transport  java-aio     java-aio/wss   connect_echo             rc=0
+PASS   transport  java-aio     java-aio/wss   medium_4000              rc=0
+PASS   transport  java-aio     java-aio/wss   downlink                 control='OK'
+PASS   transport  java-aio     rust/tls       connect_echo             rc=0
+PASS   transport  java-aio     rust/tls       medium_4000              rc=0
+PASS   transport  java-aio     rust/tls       downlink                 control='OK'

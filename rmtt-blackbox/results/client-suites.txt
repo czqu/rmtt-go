@@ -1,0 +1,44 @@
+##### go #####
+TEST client.connect_fields PASS rc=0 connect={'conn': 1, 'magic': 1668968821, 'version': 1, 'reserved': 0, 'keepalive': 17, 'credential': 'wire-cred', 'connect_at': 1793503918.421338}
+TEST client.clean_disconnect_code PASS disconnect={'conn': 1, 'disconnect': 0}
+TEST client.fragmented_connack PASS rc=0
+TEST client.auth_reject PASS rc=0 out=EVENT CONNECT_REJECTED The server has rejected our request. Please check your permissions | RESULT PASS
+TEST client.keepalive_uses_server_kp PASS rc=0 pings=2 gaps=[2.0]
+TEST client.server_kp_zero_survives PASS rc=0 pings=2
+TEST client.downlink_1MiB PASS rc=0 out=EVENT CONNECTED | EVENT RECV len=1048576 payload="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | RESULT PASS
+TEST client.server_disconnect PASS rc=0 out=EVENT CONNECTED | EVENT READY | EVENT DISCONNECTED | RESULT PASS
+TEST client.auto_reconnect PASS rc=0 connections=2 out=EVENT CONNECTED | EVENT SENT len=6 | EVENT ECHO_OK len=11 | EVENT READY_FOR_KILL | EVENT LOST reason=EOF | EVENT LOST_OBSERVED | EVENT ECHO_OK len=10 | EVENT RECONNECTED | RESULT PASS
+SUMMARY client-go total=9 passed=9 failed=0
+##### rust #####
+TEST client.connect_fields PASS rc=0 connect={'conn': 1, 'magic': 1668968821, 'version': 1, 'reserved': 0, 'keepalive': 17, 'credential': 'wire-cred', 'connect_at': 1793503938.883586}
+TEST client.clean_disconnect_code PASS disconnect={'conn': 1, 'disconnect': 0}
+TEST client.fragmented_connack PASS rc=0
+TEST client.auth_reject PASS rc=0 out=EVENT CONNECT_REJECTED connection refused (return code 0x03) | RESULT PASS
+TEST client.keepalive_uses_server_kp PASS rc=0 pings=3 gaps=[2.08, 2.08]
+TEST client.server_kp_zero_survives PASS rc=0 pings=2
+TEST client.downlink_1MiB PASS rc=0 out=EVENT CONNECTED server_kp=30 | EVENT RECV len=1048576 payload="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" | RESULT PASS
+TEST client.server_disconnect PASS rc=0 out=EVENT CONNECTED server_kp=30 | EVENT READY | EVENT DISCONNECTED | RESULT PASS
+TEST client.auto_reconnect PASS rc=0 connections=2 out=EVENT CONNECTED server_kp=2 | EVENT SENT len=6 | EVENT ECHO_OK len=11 | EVENT READY_FOR_KILL | EVENT RECONNECTED | RESULT PASS
+SUMMARY client-rust total=9 passed=9 failed=0
+##### java-netty #####
+TEST client.connect_fields PASS rc=0 connect={'conn': 1, 'magic': 1668968821, 'version': 1, 'reserved': 0, 'keepalive': 17, 'credential': 'wire-cred', 'connect_at': 1793503964.372476}
+TEST client.clean_disconnect_code PASS disconnect={'conn': 1, 'disconnect': 0}
+TEST client.fragmented_connack PASS rc=0
+TEST client.auth_reject PASS rc=0 out=.1:28003 credential=len=3#sha256=2f05d4b6 keepalive=30s | [nioEventLoopGroup-2-1] INFO net.czqu.rmtt.client.netty.RmttClient - CONNACK CONNECT_UNAUTHORIZED serverKp=0s credential=len=3#sha256=2f05d4b6
+TEST client.keepalive_uses_server_kp PASS rc=0 pings=2 gaps=[2.5]
+TEST client.server_kp_zero_survives PASS rc=0 pings=0
+TEST client.downlink_1MiB FAIL rc=1 out=ial=len=8#sha256=bdc95bfa) | [nioEventLoopGroup-2-1] WARN net.czqu.rmtt.codec.netty.RmttDecoder - protocol violation on decode: unsupported packet type RESERVED
+TEST client.server_disconnect PASS rc=0 out=len=9#sha256=d1001de9) | [nioEventLoopGroup-2-1] WARN net.czqu.rmtt.client.netty.RmttClient - connection lost: channel closed (credential=len=9#sha256=d1001de9)
+TEST client.auto_reconnect PASS rc=0 connections=2 out=tClient - CONNACK CONNECT_ACCEPTED serverKp=2s credential=len=10#sha256=ac74bc5b | [nioEventLoopGroup-3-1] INFO net.czqu.rmtt.client.netty.RmttClient - fixed heartbeat enabled keepalive=2s serverKp=2s
+SUMMARY client-java-netty total=9 passed=8 failed=1
+##### java-aio #####
+TEST client.connect_fields PASS rc=0 connect={'conn': 1, 'magic': 1668968821, 'version': 1, 'reserved': 0, 'keepalive': 17, 'credential': 'wire-cred', 'connect_at': 1793504001.6745942}
+TEST client.clean_disconnect_code PASS disconnect={'conn': 1, 'disconnect': 0}
+TEST client.fragmented_connack PASS rc=0
+TEST client.auth_reject PASS rc=0 out=O: connecting tcp://127.0.0.1:28003 credential=len=3#sha256=2f05d4b6 keepalive=30s | Nov 01, 2026 11:33:23 AM net.czqu.rmtt.logging.JdkLogger warn | WARNING: CONNACK rejected code=CONNECT_UNAUTHORIZED
+TEST client.keepalive_uses_server_kp PASS rc=0 pings=2 gaps=[2.5]
+TEST client.server_kp_zero_survives PASS rc=0 pings=0
+TEST client.downlink_1MiB FAIL rc=1 out= 7500ms (serverKp=30s) | Nov 01, 2026 11:33:40 AM net.czqu.rmtt.logging.JdkLogger warn | WARNING: protocol violation on decode: message too large: 1048577 bytes
+TEST client.server_disconnect PASS rc=0 out=rtbeat check every 7500ms (serverKp=30s) | Nov 01, 2026 11:33:50 AM net.czqu.rmtt.logging.JdkLogger warn | WARNING: connection lost (disconnect KICKED_BY_ADMIN)
+TEST client.auto_reconnect PASS rc=0 connections=2 out=INFO: CONNACK code=CONNECT_ACCEPTED serverKp=2s -> fixed 2s heartbeat | Nov 01, 2026 11:33:54 AM net.czqu.rmtt.logging.JdkLogger info | INFO: scheduling fixed heartbeat check every 500ms (serverKp=2s)
+SUMMARY client-java-aio total=9 passed=8 failed=1
