@@ -2,6 +2,7 @@ package codec
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -30,8 +31,40 @@ func TestNewControlPacketWithHeader(t *testing.T) {
 
 func TestFixedHeader_Unpack_NonZeroFlags(t *testing.T) {
 	var fh FixedHeader
-	if err := fh.unpack(Connect<<4|0x01, bytes.NewReader([]byte{0})); err == nil {
-		t.Error("unpack() with non-zero flags error = nil, want error")
+	err := fh.unpack(Connect<<4|0x01, bytes.NewReader([]byte{0}))
+	if !errors.Is(err, ErrInvalidFixedHeaderFlags) {
+		t.Fatalf("unpack() error = %v, want ErrInvalidFixedHeaderFlags", err)
+	}
+}
+
+// TestReadPacket_RejectedFrameConsumesBody asserts that the body of a rejected
+// frame is still consumed, so the byte stream stays in sync and the connection
+// can answer DISCONNECT(0x04) and close gracefully instead of resetting
+// (e2e blackbox F7).
+func TestReadPacket_RejectedFrameConsumesBody(t *testing.T) {
+	tests := []struct {
+		name    string
+		frame   []byte
+		wantErr error
+	}{
+		{"non-zero fixed header flags", []byte{0x3F, 0x03, 'a', 'b', 'c'}, ErrInvalidFixedHeaderFlags},
+		{"unknown packet type", []byte{0x40, 0x03, 'a', 'b', 'c'}, ErrUnsupportedPacketType},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A valid PINGREQ right behind the rejected frame must still parse.
+			r := bytes.NewReader(append(tt.frame, 0x50, 0x00))
+			if _, err := ReadPacket(r); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ReadPacket() error = %v, want %v", err, tt.wantErr)
+			}
+			cp, err := ReadPacket(r)
+			if err != nil {
+				t.Fatalf("ReadPacket() after rejected frame error = %v (frame body was not consumed)", err)
+			}
+			if _, ok := cp.(*PingreqPacket); !ok {
+				t.Fatalf("got %T, want *PingreqPacket", cp)
+			}
+		})
 	}
 }
 

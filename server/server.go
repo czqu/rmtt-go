@@ -294,8 +294,11 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 	for {
 		cp, err := codec.ReadPacket(conn)
 		if err != nil {
-			// An unrecognised packet type is a protocol violation; reply DISCONNECT(0x04)
-			if errors.Is(err, codec.ErrUnsupportedPacketType) {
+			// An unrecognised packet type or non-zero fixed-header flags is a
+			// protocol violation; reply DISCONNECT(0x04). The codec consumes
+			// the rejected frame first, so this reply reaches the peer before
+			// the close instead of being lost to a TCP reset.
+			if errors.Is(err, codec.ErrUnsupportedPacketType) || errors.Is(err, codec.ErrInvalidFixedHeaderFlags) {
 				dp := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
 				dp.SetReturnCode(codec.DiscProtocolViolation)
 				_ = dc.writeControl(dp)
