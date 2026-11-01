@@ -117,10 +117,12 @@ func TestQUICListener_HonoursExplicitALPNOverride(t *testing.T) {
 	}
 }
 
-// TestQUICListener_DisabledALPNAcceptsLegacyClient covers the "empty NextProtos"
-// override: ALPN is disabled so legacy peers that send none can still connect.
+// TestQUICListener_DisabledALPNAcceptsLegacyClient covers the deprecated
+// DisableALPN sentinel: ALPN is turned off so legacy peers that send none can
+// still connect. Disabling ALPN is non-compliant for QUIC (RFC 9001) and exists
+// only for migration — see codec.DisableALPN.
 func TestQUICListener_DisabledALPNAcceptsLegacyClient(t *testing.T) {
-	serverCfg := mustGenerateTLSConfigWithALPN(t, []string{}) // explicit empty = disable
+	serverCfg := mustGenerateTLSConfigWithALPN(t, []string{codec.DisableALPN})
 
 	ln := NewQUICListener(fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t)), serverCfg).(*quicListener)
 	serveQUICInBackground(t, ln, ln.addr)
