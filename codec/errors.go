@@ -11,6 +11,9 @@ var (
 	// ErrMalformedRemainingLength is returned when the RemainingLength varint
 	// continues past four bytes.
 	ErrMalformedRemainingLength = errors.New("malformed remaining length")
+	// ErrInvalidFixedHeaderFlags is returned when a frame's fixed-header
+	// flags are non-zero.
+	ErrInvalidFixedHeaderFlags = errors.New("non-zero fixed header flags")
 	// ErrPacketTooLarge is returned when a frame's RemainingLength exceeds
 	// MaxPacketSize.
 	ErrPacketTooLarge = errors.New("packet exceeds maximum size")

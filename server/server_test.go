@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -412,5 +414,116 @@ func TestServer_HandleDeviceConnection_ProtocolViolation(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("handleConnection did not return after protocol violation")
+	}
+}
+
+// TestServer_MessageHandler_PipelinedPushOrder asserts that uplink PUSH frames
+// reach the MessageHandler in the order they were sent, even when several
+// frames are pipelined in a single write. Dispatching every PUSH in its own
+// goroutine used to race, so handlers observed reordered messages
+// (e2e blackbox F4).
+func TestServer_MessageHandler_PipelinedPushOrder(t *testing.T) {
+	const n = 8
+	got := make(chan string, n)
+	opts := NewServerOptions()
+	opts.SetMessageHandler(func(deviceID string, payload []byte) {
+		got <- string(payload)
+	})
+	srv := newTestServer(opts)
+
+	serverSide, clientSide := net.Pipe()
+	defer serverSide.Close()
+	defer clientSide.Close()
+
+	go srv.handleConnection(serverSide)
+
+	if err := sendConnect(clientSide, 0x637a7175, 1, "dev-order"); err != nil {
+		t.Fatalf("CONNECT write error: %v", err)
+	}
+	if ca := readConnack(t, clientSide); ca.ReturnCode != codec.Accepted {
+		t.Fatalf("CONNACK ReturnCode = 0x%x, want Accepted", ca.ReturnCode)
+	}
+
+	// Pipeline all frames in one write, like a coalesced TCP segment.
+	var buf bytes.Buffer
+	for i := 0; i < n; i++ {
+		pp := codec.NewControlPacket(codec.Push).(*codec.PushPacket)
+		pp.Payload = []byte(fmt.Sprintf("msg-%d", i))
+		if err := pp.Write(&buf); err != nil {
+			t.Fatalf("encode PUSH %d: %v", i, err)
+		}
+	}
+	if _, err := clientSide.Write(buf.Bytes()); err != nil {
+		t.Fatalf("pipelined PUSH write error: %v", err)
+	}
+
+	for i := 0; i < n; i++ {
+		select {
+		case p := <-got:
+			want := fmt.Sprintf("msg-%d", i)
+			if p != want {
+				t.Fatalf("handler invocation %d received %q, want %q (uplink order must be preserved)", i, p, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for handler invocation %d", i)
+		}
+	}
+}
+
+// TestServer_ProtocolViolation_RepliesDisconnect asserts that protocol
+// violations mid-stream are answered with DISCONNECT(0x04) before the close —
+// including frames whose body is rejected — so the peer gets an explicit
+// reason instead of a bare close or TCP reset (e2e blackbox F7).
+func TestServer_ProtocolViolation_RepliesDisconnect(t *testing.T) {
+	tests := []struct {
+		name  string
+		frame []byte
+	}{
+		{"non-zero fixed header flags", []byte{0xFF, 0x00}},
+		{"non-zero flags with body", []byte{0x3F, 0x03, 'a', 'b', 'c'}},
+		{"unknown packet type with body", []byte{0x40, 0x03, 'a', 'b', 'c'}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newTestServer(nil)
+			serverSide, clientSide := net.Pipe()
+			defer serverSide.Close()
+			defer clientSide.Close()
+
+			done := make(chan struct{})
+			go func() {
+				srv.handleConnection(serverSide)
+				close(done)
+			}()
+
+			if err := sendConnect(clientSide, 0x637a7175, 1, "dev-viol"); err != nil {
+				t.Fatalf("CONNECT write error: %v", err)
+			}
+			if ca := readConnack(t, clientSide); ca.ReturnCode != codec.Accepted {
+				t.Fatalf("CONNACK ReturnCode = 0x%x, want Accepted", ca.ReturnCode)
+			}
+
+			if _, err := clientSide.Write(tt.frame); err != nil {
+				t.Fatalf("violation frame write error: %v", err)
+			}
+
+			_ = clientSide.SetReadDeadline(time.Now().Add(3 * time.Second))
+			cp, err := codec.ReadPacket(clientSide)
+			if err != nil {
+				t.Fatalf("expected DISCONNECT(0x04) before close, read error: %v", err)
+			}
+			dp, ok := cp.(*codec.DisconnectPacket)
+			if !ok {
+				t.Fatalf("got %T, want *DisconnectPacket", cp)
+			}
+			if rc := dp.GetReturnCode(); rc != codec.DiscProtocolViolation {
+				t.Fatalf("DISCONNECT return code = 0x%02x, want 0x04", rc)
+			}
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("handleConnection did not return after protocol violation")
+			}
+		})
 	}
 }

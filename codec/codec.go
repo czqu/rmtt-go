@@ -35,6 +35,9 @@ func ReadPacket(r io.Reader) (ControlPacket, error) {
 
 	err = fh.unpack(b[0], r)
 	if err != nil {
+		if errors.Is(err, ErrInvalidFixedHeaderFlags) {
+			discardFrameBody(r, fh)
+		}
 		return nil, err
 	}
 
@@ -47,6 +50,7 @@ func ReadPacket(r io.Reader) (ControlPacket, error) {
 
 	cp, err := NewControlPacketWithHeader(fh)
 	if err != nil {
+		discardFrameBody(r, fh)
 		return nil, err
 	}
 
@@ -89,13 +93,27 @@ func encodeLength(length int) []byte {
 func (fh *FixedHeader) unpack(typeAndFlags byte, r io.Reader) error {
 	fh.MessageType = typeAndFlags >> 4
 	fh.Flags = typeAndFlags & 0x0F
-	if fh.Flags != 0x00 {
-		return fmt.Errorf("non-zero fixed header flags: 0x%x", fh.Flags)
-	}
 
 	var err error
 	fh.RemainingLength, err = decodeLength(r)
-	return err
+	if err != nil {
+		return err
+	}
+	if fh.Flags != 0x00 {
+		return fmt.Errorf("%w: 0x%x", ErrInvalidFixedHeaderFlags, fh.Flags)
+	}
+	return nil
+}
+
+// discardFrameBody consumes the body of a rejected frame when it is safely
+// bounded by MaxPacketSize. Consuming it keeps the byte stream in sync and
+// stops close() from turning into a TCP reset: unread bytes make the kernel
+// reset the connection, discarding any DISCONNECT(0x04) protocol-violation
+// reply the caller writes before closing.
+func discardFrameBody(r io.Reader, fh FixedHeader) {
+	if fh.RemainingLength >= 0 && fh.RemainingLength <= MaxPacketSize {
+		_, _ = io.CopyN(io.Discard, r, int64(fh.RemainingLength))
+	}
 }
 
 func decodeLength(r io.Reader) (int, error) {

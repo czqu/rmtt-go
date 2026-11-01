@@ -243,6 +243,10 @@ func (s *serverImpl) handleConnection(conn net.Conn) {
 	s.handleDeviceConnection(dc, serverKp)
 }
 
+// pushQueueSize bounds the per-connection backlog of uplink PUSH payloads
+// waiting for the MessageHandler before the read loop applies backpressure.
+const pushQueueSize = 64
+
 func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64) {
 	defer func() {
 		dc.Close()
@@ -256,6 +260,23 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 	}()
 
 	conn := dc.conn
+
+	// Per-connection ordered dispatch: uplink PUSHes must reach the
+	// MessageHandler in the order they were received, pipelined frames in a
+	// single TCP segment included. One worker per connection fed by a bounded
+	// queue keeps that order without letting a slow handler stall the read
+	// loop (and with it PINGRESP and keepalive resets); when the queue is full
+	// the read loop blocks, i.e. TCP backpressure instead of message loss.
+	var pushQueue chan []byte
+	if handler := s.options.MessageHandler; handler != nil {
+		pushQueue = make(chan []byte, pushQueueSize)
+		go func() {
+			for payload := range pushQueue {
+				handler(dc.DeviceID(), payload)
+			}
+		}()
+		defer close(pushQueue)
+	}
 
 	var keepaliveTimer *time.Timer
 	if serverKp > 0 {
@@ -273,8 +294,11 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 	for {
 		cp, err := codec.ReadPacket(conn)
 		if err != nil {
-			// An unrecognised packet type is a protocol violation; reply DISCONNECT(0x04)
-			if errors.Is(err, codec.ErrUnsupportedPacketType) {
+			// An unrecognised packet type or non-zero fixed-header flags is a
+			// protocol violation; reply DISCONNECT(0x04). The codec consumes
+			// the rejected frame first, so this reply reaches the peer before
+			// the close instead of being lost to a TCP reset.
+			if errors.Is(err, codec.ErrUnsupportedPacketType) || errors.Is(err, codec.ErrInvalidFixedHeaderFlags) {
 				dp := codec.NewControlPacket(codec.Disconnect).(*codec.DisconnectPacket)
 				dp.SetReturnCode(codec.DiscProtocolViolation)
 				_ = dc.writeControl(dp)
@@ -289,8 +313,8 @@ func (s *serverImpl) handleDeviceConnection(dc *deviceConnection, serverKp int64
 
 		switch pkt := cp.(type) {
 		case *codec.PushPacket:
-			if s.options.MessageHandler != nil {
-				go s.options.MessageHandler(dc.DeviceID(), pkt.Payload)
+			if pushQueue != nil {
+				pushQueue <- pkt.Payload
 			}
 		case *codec.PingreqPacket:
 			DEBUG.Printf("PINGREQ from device=%s -> PINGRESP", dc.DeviceID())
