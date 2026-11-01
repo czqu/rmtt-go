@@ -44,13 +44,26 @@ func runtimeSelfSignedCert() (tls.Certificate, error) {
 
 func mustGenerateTLSConfig(t *testing.T) *tls.Config {
 	t.Helper()
+	return mustGenerateTLSConfigWithALPN(t, []string{"rmtt"})
+}
+
+// mustGenerateTLSConfigNoALPN returns a TLS config with a certificate but no
+// NextProtos, mirroring what a library user typically passes and the exact
+// gap that breaks interop with the Java/Netty client.
+func mustGenerateTLSConfigNoALPN(t *testing.T) *tls.Config {
+	t.Helper()
+	return mustGenerateTLSConfigWithALPN(t, nil)
+}
+
+func mustGenerateTLSConfigWithALPN(t *testing.T, protos []string) *tls.Config {
+	t.Helper()
 	cert, err := runtimeSelfSignedCert()
 	if err != nil {
 		t.Fatalf("runtime cert: %v", err)
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"rmtt"},
+		NextProtos:   protos,
 		MinVersion:   tls.VersionTLS13,
 	}
 }
