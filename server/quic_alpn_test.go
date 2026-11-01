@@ -36,7 +36,7 @@ func serveQUICInBackground(t *testing.T, ln *quicListener, addr string) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if ln.ln != nil {
+		if ln.boundLn() != nil {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
