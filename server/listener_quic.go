@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/czqu/rmtt-go/codec"
 	"github.com/quic-go/quic-go"
 )
 
@@ -46,6 +47,11 @@ func chooseQuicConf(override *quic.Config) *quic.Config {
 
 // NewQUICListener returns a QUIC (UDP + TLS 1.3) listener bound to addr (e.g. ":18885"),
 // using the library's hardened transport defaults.
+//
+// The listener always negotiates the rmtt ALPN token (codec.ALPN) so it is
+// reachable by the Java/Netty reference implementation, which requires the
+// server to select "rmtt". The supplied tls.Config is only read; any NextProtos
+// it carries is preserved and "rmtt" is added if missing.
 func NewQUICListener(addr string, config *tls.Config) Listener {
 	return &quicListener{addr: addr, config: config}
 }
@@ -65,7 +71,7 @@ func NewQUICListenerWithConfig(addr string, config *tls.Config, quicCfg *quic.Co
 }
 
 func (l *quicListener) Serve(ctx context.Context, handler func(net.Conn)) error {
-	ln, err := quic.ListenAddr(l.addr, l.config, chooseQuicConf(l.quicConf))
+	ln, err := quic.ListenAddr(l.addr, codec.WithALPN(l.config), chooseQuicConf(l.quicConf))
 	if err != nil {
 		return err
 	}
