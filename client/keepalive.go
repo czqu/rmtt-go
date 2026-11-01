@@ -227,9 +227,16 @@ func fixedKeepalive(c *client, conn io.Writer) {
 	}
 	INFO.Printf(CLI+"keepalive: heartbeat=%ds server_kp=%d",
 		heartbeat, c.serverKp.Load())
+	// The check must run well inside the server's 1.5x reap window. With a 1s
+	// floor a 1s heartbeat ticked exactly on its own send deadline, so as soon
+	// as the previous PINGREQ write had taken any time at all the ">=" test
+	// failed at that tick and the next send came a full tick (2s) later — past
+	// the 1.5s window. A 250ms floor keeps consecutive sends at most 1.25
+	// heartbeats apart.
+	const minCheckInterval = 250 * time.Millisecond
 	checkInterval := time.Duration(heartbeat) * time.Second / 4
-	if checkInterval < time.Second {
-		checkInterval = time.Second
+	if checkInterval < minCheckInterval {
+		checkInterval = minCheckInterval
 	}
 	intervalTicker := time.NewTicker(checkInterval)
 	defer intervalTicker.Stop()
