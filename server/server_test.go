@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -412,5 +414,58 @@ func TestServer_HandleDeviceConnection_ProtocolViolation(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("handleConnection did not return after protocol violation")
+	}
+}
+
+// TestServer_MessageHandler_PipelinedPushOrder asserts that uplink PUSH frames
+// reach the MessageHandler in the order they were sent, even when several
+// frames are pipelined in a single write. Dispatching every PUSH in its own
+// goroutine used to race, so handlers observed reordered messages
+// (e2e blackbox F4).
+func TestServer_MessageHandler_PipelinedPushOrder(t *testing.T) {
+	const n = 8
+	got := make(chan string, n)
+	opts := NewServerOptions()
+	opts.SetMessageHandler(func(deviceID string, payload []byte) {
+		got <- string(payload)
+	})
+	srv := newTestServer(opts)
+
+	serverSide, clientSide := net.Pipe()
+	defer serverSide.Close()
+	defer clientSide.Close()
+
+	go srv.handleConnection(serverSide)
+
+	if err := sendConnect(clientSide, 0x637a7175, 1, "dev-order"); err != nil {
+		t.Fatalf("CONNECT write error: %v", err)
+	}
+	if ca := readConnack(t, clientSide); ca.ReturnCode != codec.Accepted {
+		t.Fatalf("CONNACK ReturnCode = 0x%x, want Accepted", ca.ReturnCode)
+	}
+
+	// Pipeline all frames in one write, like a coalesced TCP segment.
+	var buf bytes.Buffer
+	for i := 0; i < n; i++ {
+		pp := codec.NewControlPacket(codec.Push).(*codec.PushPacket)
+		pp.Payload = []byte(fmt.Sprintf("msg-%d", i))
+		if err := pp.Write(&buf); err != nil {
+			t.Fatalf("encode PUSH %d: %v", i, err)
+		}
+	}
+	if _, err := clientSide.Write(buf.Bytes()); err != nil {
+		t.Fatalf("pipelined PUSH write error: %v", err)
+	}
+
+	for i := 0; i < n; i++ {
+		select {
+		case p := <-got:
+			want := fmt.Sprintf("msg-%d", i)
+			if p != want {
+				t.Fatalf("handler invocation %d received %q, want %q (uplink order must be preserved)", i, p, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for handler invocation %d", i)
+		}
 	}
 }
